@@ -329,11 +329,23 @@ create table if not exists public.classes (
 create table if not exists public.subjects (
   id uuid primary key default gen_random_uuid(),
   department_id uuid references public.departments(id) on delete cascade,
+  semester_id uuid references public.semesters(id) on delete set null,
   name text not null,
   code text,
+  credits numeric default 4,
   is_active boolean default true,
   created_at timestamptz default now()
 );
+
+-- Defensive column additions in case tables already existed
+do $$ begin
+  if not exists (select 1 from information_schema.columns where table_name='subjects' and column_name='credits') then
+    alter table public.subjects add column credits numeric default 4;
+  end if;
+  if not exists (select 1 from information_schema.columns where table_name='subjects' and column_name='semester_id') then
+    alter table public.subjects add column semester_id uuid references public.semesters(id) on delete set null;
+  end if;
+end $$;
 
 create table if not exists public.subject_offerings (
   id uuid primary key default gen_random_uuid(),
@@ -349,6 +361,7 @@ create table if not exists public.subject_offerings (
 create table if not exists public.class_enrollments (
   id uuid primary key default gen_random_uuid(),
   student_id uuid references public.profiles(id) on delete cascade,
+  legacy_student_id uuid references public.students(id) on delete set null,
   class_id uuid references public.classes(id) on delete cascade,
   roll_number text,
   created_at timestamptz default now()
@@ -362,6 +375,19 @@ create table if not exists public.coordinator_departments (
   unique(coordinator_id, department_id)
 );
 
+-- Routine entries (Timetable)
+create table if not exists public.routines (
+  id uuid primary key default gen_random_uuid(),
+  class_id uuid references public.classes(id) on delete cascade,
+  subject_offering_id uuid references public.subject_offerings(id) on delete cascade,
+  teacher_id uuid references public.profiles(id) on delete set null,
+  day_of_week text not null,
+  start_time text not null,
+  end_time text not null,
+  room text,
+  created_at timestamptz default now()
+);
+
 alter table public.programs enable row level security;
 alter table public.academic_years enable row level security;
 alter table public.semesters enable row level security;
@@ -370,12 +396,55 @@ alter table public.subjects enable row level security;
 alter table public.subject_offerings enable row level security;
 alter table public.class_enrollments enable row level security;
 alter table public.coordinator_departments enable row level security;
+alter table public.routines enable row level security;
 
--- Basic read access
+-- Global Read Access for Academic Metadata
+drop policy if exists "Academic structure read access" on public.programs;
 create policy "Academic structure read access" on public.programs for select to authenticated using (true);
+
+drop policy if exists "Academic structure read access" on public.academic_years;
 create policy "Academic structure read access" on public.academic_years for select to authenticated using (true);
+
+drop policy if exists "Academic structure read access" on public.semesters;
 create policy "Academic structure read access" on public.semesters for select to authenticated using (true);
+
+drop policy if exists "Academic structure read access" on public.classes;
 create policy "Academic structure read access" on public.classes for select to authenticated using (true);
+
+drop policy if exists "Academic structure read access" on public.subjects;
 create policy "Academic structure read access" on public.subjects for select to authenticated using (true);
+
+drop policy if exists "Academic structure read access" on public.subject_offerings;
 create policy "Academic structure read access" on public.subject_offerings for select to authenticated using (true);
+
+drop policy if exists "Academic structure read access" on public.class_enrollments;
 create policy "Academic structure read access" on public.class_enrollments for select to authenticated using (true);
+
+drop policy if exists "Routines read access" on public.routines;
+create policy "Routines read access" on public.routines for select to authenticated using (true);
+
+-- Coordinator and Super Admin Write Policies
+drop policy if exists "Academic structure write access" on public.programs;
+create policy "Academic structure write access" on public.programs for all to authenticated using (is_super_admin() or exists (select 1 from public.profiles where id = auth.uid() and role = 'coordinator'));
+
+drop policy if exists "Academic structure write access" on public.academic_years;
+create policy "Academic structure write access" on public.academic_years for all to authenticated using (is_super_admin() or exists (select 1 from public.profiles where id = auth.uid() and role = 'coordinator'));
+
+drop policy if exists "Academic structure write access" on public.semesters;
+create policy "Academic structure write access" on public.semesters for all to authenticated using (is_super_admin() or exists (select 1 from public.profiles where id = auth.uid() and role = 'coordinator'));
+
+drop policy if exists "Academic structure write access" on public.classes;
+create policy "Academic structure write access" on public.classes for all to authenticated using (is_super_admin() or exists (select 1 from public.profiles where id = auth.uid() and role = 'coordinator'));
+
+drop policy if exists "Academic structure write access" on public.subjects;
+create policy "Academic structure write access" on public.subjects for all to authenticated using (is_super_admin() or exists (select 1 from public.profiles where id = auth.uid() and role = 'coordinator'));
+
+drop policy if exists "Academic structure write access" on public.subject_offerings;
+create policy "Academic structure write access" on public.subject_offerings for all to authenticated using (is_super_admin() or exists (select 1 from public.profiles where id = auth.uid() and role = 'coordinator'));
+
+drop policy if exists "Academic structure write access" on public.class_enrollments;
+create policy "Academic structure write access" on public.class_enrollments for all to authenticated using (is_super_admin() or exists (select 1 from public.profiles where id = auth.uid() and role = 'coordinator'));
+
+drop policy if exists "Routines write access" on public.routines;
+create policy "Routines write access" on public.routines for all to authenticated using (is_super_admin() or exists (select 1 from public.profiles where id = auth.uid() and role = 'coordinator'));
+

@@ -15,6 +15,8 @@ export type UserProfile = {
   role: UserRole;
   status: UserStatus;
   full_name?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
 };
 
 export default function Page() {
@@ -40,7 +42,7 @@ export default function Page() {
         const defaultProfile: UserProfile = {
           id: currentUser.id,
           email: currentUser.email || "",
-          role: "teacher",
+          role: currentUser.user_metadata?.role || "teacher",
           status: "approved",
           full_name: currentUser.email?.split("@")[0] || "Teacher",
         };
@@ -53,7 +55,7 @@ export default function Page() {
       setProfile({
         id: currentUser.id,
         email: currentUser.email || "",
-        role: "teacher",
+        role: currentUser.user_metadata?.role || "teacher",
         status: "approved",
       });
     }
