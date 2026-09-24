@@ -12,6 +12,8 @@ create table if not exists public.profiles (
   role text not null default 'teacher' check (role in ('super_admin', 'coordinator', 'teacher', 'student')),
   status text not null default 'approved' check (status in ('pending', 'approved', 'rejected', 'suspended')),
   full_name text,
+  avatar_url text,
+  bio text,
   created_at timestamptz default now(),
   updated_at timestamptz default now()
 );

@@ -15,6 +15,8 @@ export type UserProfile = {
   role: UserRole;
   status: UserStatus;
   full_name?: string | null;
+  avatar_url?: string | null;
+  bio?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
 };

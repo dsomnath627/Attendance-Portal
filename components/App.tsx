@@ -16,6 +16,7 @@ import AdminUserVerification from "./AdminUserVerification";
 import CoordinatorDashboard from "./CoordinatorDashboard";
 import TeacherDashboard from "./TeacherDashboard";
 import StudentDashboard from "./StudentDashboard";
+import MyProfilePage from "./MyProfilePage";
 
 import { createWorker } from "tesseract.js";
 
@@ -57,7 +58,8 @@ type Tab =
   | "attendance"
   | "reports"
   | "marks"
-  | "admin";
+  | "admin"
+  | "profile";
 
 type Department = {
   id: string;
@@ -414,6 +416,13 @@ export default function App({
             />
           )}
 
+          <NavButton
+            active={tab === "profile"}
+            icon={<Settings size={18} />}
+            label="My Profile"
+            onClick={() => setTab("profile")}
+          />
+
         </nav>
 
 
@@ -659,12 +668,19 @@ export default function App({
                 showError={showError}
               />
             )}
+
+            {tab === "profile" && (
+              <MyProfilePage
+                userProfile={userProfile}
+                onReload={loadAll}
+              />
+            )}
           </>
 
         )}
 
         <div className="copywrite-footer" style={{ padding: '20px', textAlign: 'center', color: '#94a3b8', fontSize: '13px', marginTop: 'auto' }}>
-          Made by : Somnath Mapa, Anirban Sarkar, Soumabha Mahapatra, Debendranath Das
+          Software Developed by : Somnath Mapa, Anirban Sarkar, Soumabha Mahapatra, Debendranath Das
         </div>
       </main>
 
