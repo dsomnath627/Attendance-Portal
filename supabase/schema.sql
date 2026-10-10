@@ -428,13 +428,33 @@ drop policy if exists "Academic structure read access" on public.subjects;
 create policy "Academic structure read access" on public.subjects for select to authenticated using (true);
 
 drop policy if exists "Academic structure read access" on public.subject_offerings;
-create policy "Academic structure read access" on public.subject_offerings for select to authenticated using (true);
+create policy "Academic structure read access" on public.subject_offerings for select to authenticated using (
+  is_super_admin()
+  or exists (select 1 from public.profiles where id = auth.uid() and role = 'coordinator')
+  or teacher_id = auth.uid()
+  or exists (
+    select 1 from public.class_enrollments ce
+    join public.students s on ce.legacy_student_id = s.id
+    where ce.class_id = subject_offerings.class_id
+    and s.profile_id = auth.uid()
+  )
+);
 
 drop policy if exists "Academic structure read access" on public.class_enrollments;
 create policy "Academic structure read access" on public.class_enrollments for select to authenticated using (true);
 
 drop policy if exists "Routines read access" on public.routines;
-create policy "Routines read access" on public.routines for select to authenticated using (true);
+create policy "Routines read access" on public.routines for select to authenticated using (
+  is_super_admin()
+  or exists (select 1 from public.profiles where id = auth.uid() and role = 'coordinator')
+  or teacher_id = auth.uid()
+  or exists (
+    select 1 from public.class_enrollments ce
+    join public.students s on ce.legacy_student_id = s.id
+    where ce.class_id = routines.class_id
+    and s.profile_id = auth.uid()
+  )
+);
 
 -- Coordinator and Super Admin Write Policies
 drop policy if exists "Academic structure write access" on public.programs;

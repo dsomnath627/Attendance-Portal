@@ -171,6 +171,7 @@ export default function App({
   const [batches, setBatches] = useState<Batch[]>([]);
   const [groups, setGroups] = useState<StudentGroup[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
+  const [classEnrollments, setClassEnrollments] = useState<any[]>([]);
   const [assessments, setAssessments] = useState<Assessment[]>([]);
   const [allProfiles, setAllProfiles] = useState<UserProfile[]>([]);
   const [selectedTeacherId, setSelectedTeacherId] = useState<string>("all");
@@ -308,6 +309,8 @@ export default function App({
     setAssessments(
       (assessmentsResult.data as Assessment[]) || []
     );
+    
+  
 
     if (userProfile.role === "super_admin") { await loadProfiles(); }
     setLoading(false);
@@ -3348,14 +3351,17 @@ function AttendancePage({
   const [saving, setSaving] = useState(false);
   const [verified, setVerified] = useState(false);
   const [offerings, setOfferings] = useState<any[]>([]);
+  const [classEnrollments, setClassEnrollments] = useState<any[]>([]);
   const [selectedOffering, setSelectedOffering] = useState<string>("");
 
   useEffect(() => {
     async function loadOfferings() {
-      const { data } = await supabase
-        .from("subject_offerings")
-        .select("id, class_id, subjects(name, code), classes(name)");
-      if (data) setOfferings(data);
+      const [offeringsRes, enrollmentsRes] = await Promise.all([
+        supabase.from("subject_offerings").select("id, class_id, subjects(name, code), classes(name)"),
+        supabase.from("class_enrollments").select("*")
+      ]);
+      if (offeringsRes.data) setOfferings(offeringsRes.data);
+      if (enrollmentsRes.data) setClassEnrollments(enrollmentsRes.data);
     }
     loadOfferings();
   }, []);
@@ -3368,13 +3374,20 @@ function AttendancePage({
     (g) => g.batch_id === batch && g.is_active
   );
 
-  const groupStudents = students.filter(
+  
+  const selectedOfferingObj = offerings.find(o => o.id === selectedOffering);
+  const selectedClassId = selectedOfferingObj?.class_id;
+
+  const groupStudents = (selectedClassId && classEnrollments.length > 0)
+    ? students.filter(s => classEnrollments.some(e => e.class_id === selectedClassId && e.legacy_student_id === s.id))
+    : students.filter(
     (s) =>
       s.department_id === department &&
       s.batch_id === batch &&
       s.group_id === group &&
       s.is_active !== false
   );
+
 
   function resetAttendance() {
     setFile(null);
@@ -3420,10 +3433,8 @@ function AttendancePage({
   }
 
   async function processOCR() {
-    if (!department || !batch || !group || !date || !file) {
-      showError(
-        "Select Date, Department, Batch, Group and Attendance Photo."
-      );
+    if ((!department || !batch || !group) && !selectedOffering) { showError("Select either Department/Batch/Group OR Subject Offering."); return; } if (!date || !file) {
+      showError("Select Date, and Attendance Photo.");
       return;
     }
 
@@ -3467,7 +3478,7 @@ function AttendancePage({
        */
       const validGroupCodes = new Set(
         groupStudents.map((student) =>
-          getLastFourDigits(student.student_id)
+          student.attendance_code || getLastFourDigits(student.student_id)
         )
       );
 
@@ -3480,7 +3491,7 @@ function AttendancePage({
 
       const attendanceRows: AttendanceRow[] = groupStudents.map(
         (student): AttendanceRow => {
-          const attendanceCode = getLastFourDigits(student.student_id);
+          const attendanceCode = student.attendance_code || getLastFourDigits(student.student_id);
           const isDetected = detected.has(attendanceCode);
           const status: AttendanceStatus = isDetected ? "P" : "A";
 
@@ -3540,8 +3551,12 @@ function AttendancePage({
       return;
     }
 
-    if (!department || !batch || !group || !date) {
-      showError("Department, Batch, Group and Date are required.");
+    if ((!department || !batch || !group) && !selectedOffering) {
+      showError("Department/Batch/Group OR Subject Offering is required.");
+      return;
+    }
+    if (!date) {
+      showError("Date is required.");
       return;
     }
 
@@ -3637,7 +3652,7 @@ function AttendancePage({
         student_id: row.student.id,
         status: row.status,
         detected_code: row.detected
-          ? getLastFourDigits(row.student.student_id)
+          ? (row.student.attendance_code || getLastFourDigits(row.student.student_id))
           : null,
       }));
 
@@ -3857,7 +3872,7 @@ function AttendancePage({
             <div>
               <h2>Attendance Verification</h2>
               <p>
-                {selectedDepartmentName || "-"} / {selectedBatchName || "-"} / Group {selectedGroupName || "-"} / {date}
+                <strong>{selectedOfferingObj?.subjects?.name || "No Subject"} ({selectedOfferingObj?.classes?.name || "No Class"})</strong> | Date: {date}
               </p>
               <p>
                 Rule: codes detected in the photo are Present. All other
@@ -3907,7 +3922,7 @@ function AttendancePage({
                     <td>{row.student.name}</td>
                     <td>
                       <span className="code-pill">
-                        {getLastFourDigits(row.student.student_id)}
+                        {row.student.attendance_code || getLastFourDigits(row.student.student_id)}
                       </span>
                     </td>
                     <td>

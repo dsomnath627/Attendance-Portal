@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { supabase } from "@/lib/supabase";
 import type { UserProfile } from "@/app/page";
 import SubjectPage from "./SubjectPage";
+import CalendarTimetable from "./CalendarTimetable";
 import {
   BookOpen,
   CalendarCheck,

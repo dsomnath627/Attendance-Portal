@@ -190,6 +190,8 @@ export default function CoordinatorDashboard({
     else if (type === 'classes') { setClassName(item.name); setClassBatchId(item.batch_id); }
     else if (type === 'roster') { setRostStudentId(item.student_id); setRostName(item.name); setRostSlr(item.slr || ""); setRostDeptId(item.department_id || ""); setRostBatchId(item.batch_id || ""); setRostGroupId(item.group_id || ""); setRostAttCode(item.attendance_code || ""); }
     else if (type === 'subjects') { setSubjName(item.name); setSubjCode(item.code || ""); setSubjDeptId(item.department_id); setSubjSemId(item.semester_id || ""); setSubjCredits(item.credits?.toString() || "4"); }
+    else if (type === 'subject_offerings') { setAssignSubjId(item.subject_id); setAssignClassId(item.class_id); setAssignTeacherId(item.teacher_id); setAssignSemId(item.semester_id); setAssignYearId(item.academic_year_id); }
+    else if (type === 'routines') { setRoutClassId(item.class_id); setRoutOfferingId(item.subject_offering_id); setRoutTeacherId(item.teacher_id); setRoutDay(item.day_of_week); setRoutStart(item.start_time); setRoutEnd(item.end_time); setRoutRoom(item.room || ""); }
   };
 
   async function toggleStatus(table: string, id: string, currentStatus: boolean) {
@@ -316,6 +318,30 @@ export default function CoordinatorDashboard({
     else { notify?.(editingId ? "Class updated." : "Class created."); resetForms(); loadAllData(); }
   }
 
+  
+  async function saveRosterStudent() {
+    if (!rostStudentId || !rostName) { showError?.("Student ID and Name are required."); return; }
+    if (rosterStudents.find(s => s.student_id === rostStudentId && s.id !== editingId)) {
+      showError?.("Student ID already exists in the roster."); return;
+    }
+    setFormLoading(true);
+    const data = { 
+      student_id: rostStudentId, 
+      name: rostName, 
+      slr: rostSlr || null,
+      department_id: rostDeptId || null,
+      batch_id: rostBatchId || null,
+      group_id: rostGroupId || null,
+      attendance_code: rostAttCode || null
+    };
+    const { error } = editingId
+      ? await supabase.from("students").update(data).eq("id", editingId)
+      : await supabase.from("students").insert([data]);
+    setFormLoading(false);
+    if (error) showError?.(error.message);
+    else { notify?.(editingId ? "Student updated." : "Student created."); resetForms(); loadAllData(); }
+  }
+
   async function saveSubject() {
     if (!subjName.trim() || !subjDeptId) { showError?.("Name and Department are required."); return; }
     if (subjects.find(s => s.name.toLowerCase() === subjName.trim().toLowerCase() && s.department_id === subjDeptId && s.id !== editingId)) {
@@ -362,8 +388,23 @@ export default function CoordinatorDashboard({
     else { notify?.("Student enrolled in class."); resetForms(); loadAllData(); }
   }
 
-  async function saveRoutineEntry() {
+    async function saveRoutineEntry() {
     if (!routClassId || !routOfferingId || !routTeacherId || !routStart || !routEnd) { showError?.("Please fill all required fields."); return; }
+    if (routStart >= routEnd) {
+      showError?.("End time must be after start time.");
+      return;
+    }
+    const conflict = routines.find(r => 
+      r.day_of_week === routDay &&
+      ((r.start_time >= routStart && r.start_time < routEnd) ||
+       (r.end_time > routStart && r.end_time <= routEnd) ||
+       (r.start_time <= routStart && r.end_time >= routEnd)) &&
+      (r.teacher_id === routTeacherId || r.class_id === routClassId || (routRoom && r.room === routRoom))
+    );
+    if (conflict) {
+      showError?.("Schedule conflict detected for teacher, class, or room.");
+      return;
+    }
     setFormLoading(true);
     const { error } = await supabase.from("routines").insert([{
       class_id: routClassId, subject_offering_id: routOfferingId, teacher_id: routTeacherId,
@@ -768,7 +809,8 @@ export default function CoordinatorDashboard({
                 <div className="form-group"><label>Academic Year</label><select value={assignYearId} onChange={e => setAssignYearId(e.target.value)}><option value="">Select Year</option>{academicYears.map(y => <option key={y.id} value={y.id}>{y.name}</option>)}</select></div>
                 <div className="form-group"><label>Semester</label><select value={assignSemId} onChange={e => setAssignSemId(e.target.value)}><option value="">Select Semester</option>{semesters.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></div>
               </div>
-              <button className="primary-btn" disabled={formLoading} onClick={saveSubjectOffering}><Plus size={16} /> Assign Teacher</button>
+              <button className="primary-btn" disabled={formLoading} onClick={saveSubjectOffering}>{editingId ? <CheckCircle size={16}/> : <Plus size={16} />} {editingId ? "Update Assignment" : "Assign Teacher"}</button>
+              {editingId && <button className="secondary-btn" onClick={resetForms}>Cancel</button>}
               <div style={{ marginTop: "24px" }}>{renderFilter()}</div>
               {filtered.length === 0 ? <div className="empty-state">No assignments found.</div> : (
                 <div className="grid-list">
@@ -781,12 +823,59 @@ export default function CoordinatorDashboard({
                     return (
                       <div className={`item-card ${so.is_active === false ? "inactive" : ""}`} key={so.id}>
                         <div className="actions">
+                          <button className="icon-btn" title="Edit" onClick={() => handleEdit("subject_offerings", so)}><Edit size={14} /></button>
                           <button className="icon-btn" title={so.is_active === false ? "Activate" : "Deactivate"} onClick={() => toggleStatus("subject_offerings", so.id, so.is_active !== false)}>{so.is_active === false ? <Power size={14} /> : <PowerOff size={14} />}</button>
                           <button className="icon-btn delete" onClick={() => deleteRecord("subject_offerings", so.id)}><Trash2 size={14} /></button>
                         </div>
                         <div className="item-title">{s?.name || "Subject"} ({c?.name || "Class"})</div>
                         <div className="item-sub">👨‍🏫 Teacher: {t?.full_name || t?.email || "Unassigned"}</div>
                         <div className="item-sub">📅 {sem?.name || "N/A"} | {yr?.name || "N/A"}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )})()}
+
+                    {/* STUDENT ROSTER TAB */}
+          {subTab === "roster" && (() => {
+            const filtered = rosterStudents.filter(s => {
+              const search = searchQuery.toLowerCase();
+              return s.name.toLowerCase().includes(search) || s.student_id.toLowerCase().includes(search) || s.attendance_code?.toLowerCase().includes(search);
+            });
+            return (
+            <div className="coord-card">
+              <h3>{editingId ? "Edit Student" : "Add Student to Institutional Roster"}</h3>
+              <div className="form-row">
+                <div className="form-group"><label>Student ID *</label><input placeholder="e.g. 101100" value={rostStudentId} onChange={e => setRostStudentId(e.target.value)} /></div>
+                <div className="form-group"><label>Full Name *</label><input placeholder="Student Name" value={rostName} onChange={e => setRostName(e.target.value)} /></div>
+                <div className="form-group"><label>SLR / Registration</label><input placeholder="Optional" value={rostSlr} onChange={e => setRostSlr(e.target.value)} /></div>
+                <div className="form-group"><label>Attendance Code</label><input placeholder="4-digit code" value={rostAttCode} onChange={e => setRostAttCode(e.target.value)} /></div>
+                
+                <div className="form-group"><label>Department</label><select value={rostDeptId} onChange={e => setRostDeptId(e.target.value)}><option value="">None</option>{departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}</select></div>
+                <div className="form-group"><label>Batch</label><select value={rostBatchId} onChange={e => setRostBatchId(e.target.value)}><option value="">None</option>{batches.filter(b => !rostDeptId || b.department_id === rostDeptId).map(b => <option key={b.id} value={b.id}>{b.name}</option>)}</select></div>
+                <div className="form-group"><label>Group</label><select value={rostGroupId} onChange={e => setRostGroupId(e.target.value)}><option value="">None</option>{groups.filter(g => !rostBatchId || g.batch_id === rostBatchId).map(g => <option key={g.id} value={g.id}>{g.name}</option>)}</select></div>
+              </div>
+              <button className="primary-btn" disabled={formLoading} onClick={saveRosterStudent}>{editingId ? <CheckCircle size={16}/> : <Plus size={16} />} {editingId ? "Update Student" : "Add Student"}</button>
+              {editingId && <button className="secondary-btn" onClick={resetForms}>Cancel</button>}
+              
+              <div style={{ marginTop: "24px" }}>{renderFilter()}</div>
+              {filtered.length === 0 ? <div className="empty-state">No students found in roster.</div> : (
+                <div className="grid-list">
+                  {filtered.map(st => {
+                    const d = departments.find(d => d.id === st.department_id);
+                    const b = batches.find(b => b.id === st.batch_id);
+                    const g = groups.find(g => g.id === st.group_id);
+                    return (
+                      <div className="item-card" key={st.id}>
+                        <div className="actions">
+                          <button className="icon-btn" title="Edit" onClick={() => handleEdit("roster", st)}><Edit size={14} /></button>
+                          <button className="icon-btn delete" onClick={() => deleteRecord("students", st.id)}><Trash2 size={14} /></button>
+                        </div>
+                        <div className="item-title">{st.name}</div>
+                        <div className="item-sub">ID: {st.student_id} | Code: {st.attendance_code || "N/A"}</div>
+                        <div className="item-sub">🏢 {d?.name || "N/A"} | 🎓 {b?.name || "N/A"}</div>
                       </div>
                     );
                   })}
@@ -859,7 +948,8 @@ export default function CoordinatorDashboard({
                 <div className="form-group"><label>End Time *</label><input type="time" value={routEnd} onChange={e => setRoutEnd(e.target.value)} /></div>
                 <div className="form-group"><label>Room</label><input value={routRoom} onChange={e => setRoutRoom(e.target.value)} placeholder="Room 204" /></div>
               </div>
-              <button className="primary-btn" disabled={formLoading} onClick={saveRoutineEntry}><Plus size={16} /> Add Routine</button>
+              <button className="primary-btn" disabled={formLoading} onClick={saveRoutineEntry}>{editingId ? <CheckCircle size={16}/> : <Plus size={16} />} {editingId ? "Update Routine" : "Add Routine"}</button>
+              {editingId && <button className="secondary-btn" onClick={resetForms}>Cancel</button>}
               <div style={{ marginTop: "24px" }}>{renderFilter()}</div>
               {filtered.length === 0 ? <div className="empty-state">No routines found.</div> : (
                 <div className="grid-list">
@@ -870,7 +960,10 @@ export default function CoordinatorDashboard({
                     const s = subjects.find(subj => subj.id === offering?.subject_id);
                     return (
                       <div className="item-card" key={r.id}>
-                        <div className="actions"><button className="icon-btn delete" onClick={() => deleteRecord("routines", r.id)}><Trash2 size={14} /></button></div>
+                        <div className="actions">
+                          <button className="icon-btn" title="Edit" onClick={() => handleEdit("routines", r)}><Edit size={14} /></button>
+                          <button className="icon-btn delete" onClick={() => deleteRecord("routines", r.id)}><Trash2 size={14} /></button>
+                        </div>
                         <div className="item-title">{r.day_of_week} | {r.start_time} - {r.end_time}</div>
                         <div className="item-sub">📚 {s?.name} ({c?.name})</div>
                         <div className="item-sub">👨‍🏫 {t?.full_name || t?.email} | 🚪 {r.room || "N/A"}</div>
