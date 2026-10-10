@@ -1,113 +1,93 @@
-# Attendance Portal TIU — Multi-Tenant & Role-Based Academic System
+# Attendance Portal TIU (Dr. Campus) — Multi-Tenant & Role-Based Academic System
 
-A modern, Vercel/Netlify-ready **Next.js + Supabase** web application designed with **per-user data isolation (Multi-Tenancy)** and **Role-Based Access Control (RBAC)** for academic attendance and marks management.
+A modern, production-ready **Next.js 14 + Supabase** academic web application featuring **per-user data isolation (Multi-Tenancy)**, **Role-Based Access Control (RBAC)**, **AI-powered OCR attendance verification (Google Gemini Vision)**, and **Excel workbook management**.
 
 ---
 ## 🌟 Key Highlights & Security Architecture
 
-1. **User Separation & Data Isolation**:
-   - **Teachers** can only see, create, and manage their own academic workspace (departments, batches, student groups, student rosters, attendance sessions, marks, and Excel workbook imports).
-   - **Strict Data Segregation**: Every database row is linked to a `user_id` (`auth.users.id`), and access is strictly controlled at the database level via Postgres **Row Level Security (RLS)**.
+### 1. 👥 Multi-Role Academic Platform
+* **Super Admin**: System-wide administrative oversight, user management & verification (approve, reject, suspend, promote/demote user roles), and global workspace filtering across all registered teachers.
+* **Coordinator**: Institutional structure management, defining Departments, Academic Years, Semesters, Programs, Batches, Classes, Subjects, Subject Offerings (teacher assignment), and Class Routines/Timetables.
+* **Teacher**: Dedicated dashboard listing assigned subjects, class schedules, manual/AI attendance intake, assessment score tracking, student roster management, and Excel sheet exports.
+* **Student**: Personalized portal showing enrolled subjects, attendance percentages, daily routines, class schedules, and academic assessment results.
 
-2. **Super Admin Role & System Oversight**:
-   - **Super Admin Panel**: A dedicated administrative dashboard to view all registered system users (Teachers & Super Admins), monitor system-wide statistics, and promote/demote user roles.
-   - **Workspace Filter Switcher**: Super Admins can switch between viewing system-wide aggregated data or filtering workspace data by any specific teacher.
+### 2. 🤖 AI-Powered OCR Attendance Verification
+* **Server-side Vision AI**: Integrates Google Gemini 1.5 Flash via Next.js Server Route ([`app/api/ocr/route.ts`](file:///c:/cpp0pw/CODING/Others/Attendance-Portal_TIU/app/api/ocr/route.ts)) to read handwritten or printed 4-digit enrollment codes from uploaded attendance sheet photos.
+* **Automated Roll Matcher**: Automatically extracts student attendance codes, handles common OCR character confusions (e.g., `O` $\rightarrow$ `0`, `I` $\rightarrow$ `1`), and marks matching students as Present (`P`) in real time.
+* **Browser OCR Fallback**: Integrated client-side Tesseract.js engine for offline or client-side text processing.
 
-3. **Smart Features**:
-   - OCR-assisted student attendance verification via Tesseract.js (browser-based last 4-digit matching).
-   - Full Excel workbook import and export (.xlsx).
-   - Flexible academic hierarchy (Departments → Batches → Student Groups → Students → Assessments).
+### 3. 🔒 Robust Security & Multi-Tenant Data Isolation
+* **Database-Level Protection**: Built on PostgreSQL **Row Level Security (RLS)** in Supabase. Every teacher's workspace data is strictly segregated using `user_id = auth.uid()`.
+* **Super Admin Override**: Custom PostgreSQL function `is_super_admin()` allows administrators global read/write privileges without compromising row-level checks for standard users.
+* **Account Status Guard**: New signups undergo role and status verification (`approved`, `pending`, `rejected`, `suspended`). Non-approved accounts are automatically blocked at the authentication gateway.
 
----
-
-## 🏗️ Technical Architecture & Data Model
-
-### 1. Database Schema (`supabase/schema.sql`)
-
-```
-                          ┌──────────────────────────┐
-                          │   auth.users (Supabase)  │
-                          └─────────────┬────────────┘
-                                        │
-                                        ▼
-                          ┌──────────────────────────┐
-                          │     public.profiles      │
-                          │  (id, email, role, name) │
-                          └─────────────┬────────────┘
-                                        │
-                                        ▼
- ┌─────────────────────────────────────────────────────────────────────────────┐
- │                         PUBLIC DATA TABLES                                  │
- │   (departments, batches, student_groups, students, assessments,             │
- │    attendance_sessions, attendance_records, marks, mark_records, etc.)      │
- │                                                                             │
- │   * Every table includes: user_id uuid references auth.users(id)            │
- └─────────────────────────────────────────────────────────────────────────────┘
-```
-
-#### Roles:
-- `'teacher'`: Default role assigned automatically upon registration via database trigger (`on_auth_user_created`).
-- `'super_admin'`: System admin role with global read/write access and user management privileges.
+### 4. 📊 Excel Import / Export System
+* Full `.xlsx` spreadsheet integration powered by `xlsx` (SheetJS).
+* Import student rosters and marks directly into database JSON schemas (`mark_records`, `workbook_meta`).
+* Export comprehensive attendance reports and assessment sheets to Excel with a single click.
 
 ---
 
-## 🛡️ Row Level Security (RLS) Policies
+## 🏗️ Technical Architecture & Stack
 
-All public tables have Row Level Security enabled. The RLS policies enforce isolation:
+| Layer | Technology |
+| :--- | :--- |
+| **Frontend** | Next.js 14 (App Router), React 18, TypeScript |
+| **Backend & Auth** | Supabase (PostgreSQL, Auth, Realtime, RLS) |
+| **AI OCR** | Google Generative AI (`@google/generative-ai` - Gemini 1.5 Flash) |
+| **Spreadsheet Handling** | `xlsx` |
+| **Icons & Styling** | Lucide React, Custom CSS Design System with Role-Based Palette Variables |
 
-### Postgres Helper Function (`is_super_admin`):
-```sql
-create or replace function public.is_super_admin()
-returns boolean language sql security definer set search_path = public as $$
-  select exists (
-    select 1 from public.profiles
-    where id = auth.uid() and role = 'super_admin'
-  );
-$$;
-```
-
-### Table Isolation Policy Pattern:
-```sql
-create policy "table_name_isolation" on public.table_name
-  for all to authenticated
-  using (user_id = auth.uid() or is_super_admin())
-  with check (user_id = auth.uid() or is_super_admin());
-```
-
-> **Why this matters**: Even if an API request attempts to request or tamper with another teacher's data ID, Supabase RLS will drop/reject the operation at the Postgres engine level.
+> 📌 **For in-depth architecture diagrams, data models, RLS policies, and API specifications, see [`TECH.md`](file:///c:/cpp0pw/CODING/Others/Attendance-Portal_TIU/TECH.md).**
 
 ---
 
 ## 🚀 Setup & Installation Guide
 
-### Step 1: Create Supabase Project
-1. Log in to [Supabase](https://supabase.com/) and create a new project.
-2. Go to **SQL Editor** -> **New Query**.
-3. Copy the complete contents of [`supabase/schema.sql`](file:///c:/cpp0pw/CODING/Others/Attendance-Portal_TIU/supabase/schema.sql) and click **Run**.
+### Step 1: Clone & Install Dependencies
 
-### Step 2: Create the Initial Super Admin User
-1. Go to **Authentication** -> **Users** in your Supabase dashboard and create a new account (or register via the web app login screen).
-2. Go to **SQL Editor** and run the following query to elevate your user to `super_admin`:
+```bash
+git clone <repository-url>
+cd Attendance-Portal_TIU
+npm install
+```
+
+### Step 2: Supabase Project Setup
+
+1. Create a project at [Supabase.com](https://supabase.com/).
+2. Navigate to **SQL Editor** $\rightarrow$ **New Query**.
+3. Copy the entire contents of [`supabase/schema.sql`](file:///c:/cpp0pw/CODING/Others/Attendance-Portal_TIU/supabase/schema.sql) and click **Run**.
+4. (Optional) Run [`supabase/seed_demo.sql`](file:///c:/cpp0pw/CODING/Others/Attendance-Portal_TIU/supabase/seed_demo.sql) to populate initial demo data.
+
+### Step 3: Configure Environment Variables
+
+Create a `.env.local` file in the project root:
+
+```env
+# Supabase Credentials
+NEXT_PUBLIC_SUPABASE_URL=https://YOUR_PROJECT_REF.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=YOUR_SUPABASE_ANON_KEY
+
+# Gemini AI API Key (Required for AI OCR feature)
+GEMINI_API_KEY=YOUR_GEMINI_API_KEY
+```
+
+> ⚠️ **Note**: Do NOT commit `.env.local` or expose your Supabase `service_role` key to the frontend.
+
+### Step 4: Provision Initial Super Admin User
+
+1. Register an account through the app UI or via Supabase Auth.
+2. In Supabase **SQL Editor**, elevate the user's role:
 
 ```sql
 UPDATE public.profiles
-SET role = 'super_admin'
-WHERE email = 'your-email@example.com';
+SET role = 'super_admin', status = 'approved'
+WHERE email = 'admin@example.com';
 ```
 
-### Step 3: Local Environment Setup
-Create a `.env.local` file in the root directory:
+### Step 5: Start Local Development Server
 
-```env
-NEXT_PUBLIC_SUPABASE_URL=https://YOUR_PROJECT_REF.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=YOUR_SUPABASE_ANON_KEY
-```
-
-> ⚠️ **Security Warning**: Do NOT expose your Supabase `service_role` secret key in client-side code. The anon key combined with RLS provides complete security.
-
-### Step 4: Run Locally
 ```bash
-npm install
 npm run dev
 ```
 
@@ -115,30 +95,74 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 
 ---
 
-## 📱 User Workflows
+## 📱 Role & Workflow Overview
 
-### 👨‍🏫 Teacher Workflow:
-1. **Registration**: Sign up via the **Register Teacher** tab on the login screen.
-2. **Setup**: Add Departments, Batches, and Student Groups.
-3. **Student Roster**: Add students manually or import from an Excel sheet.
-4. **Attendance**: Upload attendance sheet image for OCR processing or take manual attendance.
-5. **Marks**: Enter assessment scores and export reports to Excel.
-
-### ⚡ Super Admin Workflow:
-1. Log in with a `super_admin` account.
-2. Access the **Admin Panel** tab in the sidebar navigation.
-3. View all registered teachers, full names, emails, and user IDs.
-4. Promote or demote user roles (`Teacher` ↔ `Super Admin`).
-5. Use the **Filter Workspace Data** dropdown in the top header to inspect workspace data for any specific teacher or view system-wide data.
+```
+                      ┌─────────────────────────┐
+                      │    Registration/Login   │
+                      └────────────┬────────────┘
+                                   │
+             ┌─────────────────────┼─────────────────────┐
+             ▼                     ▼                     ▼
+      [Super Admin]          [Coordinator]           [Teacher]
+   - Verify Users         - Manage Depts        - View Routine
+   - Role Promotion       - Setup Classes       - Take Attendance
+   - Switch Workspace     - Assign Subjects     - AI OCR Scan
+   - Global Oversight     - Schedule Routines   - Marks Entry & Export
+                                                         │
+                                                         ▼
+                                                     [Student]
+                                                - View Attendance %
+                                                - Check Today's Routine
+                                                - View Subject Marks
+```
 
 ---
 
-## 🌐 Deployment (Vercel & Netlify)
+## 📂 Project Structure
 
-1. Push your repository to GitHub.
-2. Import the project into **Vercel** or **Netlify**.
-3. Add environment variables under Project Settings:
-   - `NEXT_PUBLIC_SUPABASE_URL`
-   - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-4. Deploy!
+```
+Attendance-Portal_TIU/
+├── app/
+│   ├── api/ocr/route.ts      # Server API Route for Gemini AI OCR
+│   ├── landing/              # Marketing & Product Landing Page
+│   │   ├── landing.css
+│   │   └── page.tsx
+│   ├── globals.css           # Global Design System & Dynamic Tokens
+│   ├── layout.tsx            # Root App Layout
+│   └── page.tsx              # Auth Gateway & Main View Dispatcher
+├── components/
+│   ├── AdminUserVerification.tsx # Super Admin User Management Dashboard
+│   ├── App.tsx                   # Core Application Layout & State Manager
+│   ├── Auth.tsx                  # Login / Registration Modal Component
+│   ├── CoordinatorDashboard.tsx  # Academic Hierarchy & Timetable Setup
+│   ├── MyProfilePage.tsx         # User Profile Editor
+│   ├── StudentDashboard.tsx      # Student Portal View
+│   ├── SubjectPage.tsx           # Subject-Specific Attendance & Marks Management
+│   └── TeacherDashboard.tsx      # Teacher Workstation Dashboard
+├── lib/
+│   └── supabase.ts           # Supabase Client Initializer
+├── supabase/
+│   ├── schema.sql            # Complete Database DDL, Triggers, & RLS Policies
+│   └── seed_demo.sql         # Seed Script for Testing
+├── package.json              # Project Dependencies & Scripts
+├── README.md                 # Project Overview & Setup Guide
+└── TECH.md                   # Technical Architecture & API Documentation
+```
 
+---
+
+## 🌐 Deployment Instructions
+
+### Vercel / Netlify
+1. Push repository to GitHub/GitLab.
+2. Import repository into **Vercel** or **Netlify**.
+3. Set build command to `npm run build` and output directory to `.next`.
+4. Add environment variables (`NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `GEMINI_API_KEY`).
+5. Trigger Deployment.
+
+---
+
+## 📄 License & Attribution
+
+Developed for **Techno India University (TIU)** academic management. Built with Next.js, Supabase, and Google Gemini AI.

@@ -126,6 +126,7 @@ type Mark = {
 };
 
 type ImportStudent = {
+  user_id?: string;
   student_id: string;
   name: string;
   slr: string | null;
@@ -2058,6 +2059,7 @@ function StudentsPage({
 
 
         records.push({
+          user_id: user.id,
           student_id:
             studentId.trim(),
 
@@ -2347,6 +2349,42 @@ function StudentsPage({
 
 
     await onReload();
+  }
+
+  async function deleteFilteredStudents() {
+    if (filteredStudents.length === 0) return;
+
+    const confirmed = window.confirm(
+      `Are you sure you want to permanently delete ${filteredStudents.length} student(s) currently shown in the list? This action cannot be undone.`
+    );
+
+    if (!confirmed) return;
+
+    setImporting(true);
+    const studentIds = filteredStudents.map((s) => s.id);
+    const chunkSize = 100;
+    let deletedCount = 0;
+
+    try {
+      for (let i = 0; i < studentIds.length; i += chunkSize) {
+        const chunk = studentIds.slice(i, i + chunkSize);
+        const { error } = await supabase
+          .from("students")
+          .delete()
+          .in("id", chunk);
+
+        if (error) {
+          throw error;
+        }
+        deletedCount += chunk.length;
+      }
+      notify(`Successfully deleted ${deletedCount} student(s).`);
+      await onReload();
+    } catch (error: any) {
+      showError(error.message || "Failed to delete students.");
+    } finally {
+      setImporting(false);
+    }
   }
 
 
@@ -2647,6 +2685,19 @@ function StudentsPage({
               />
 
             </label>
+
+            {/* DELETE ALL FILTERED */}
+            {filteredStudents.length > 0 && (
+              <button
+                className="delete-btn"
+                onClick={deleteFilteredStudents}
+                disabled={importing}
+                style={{ marginLeft: "8px", background: "#fee2e2", color: "#dc2626", border: "1px solid #fecaca", padding: "6px 12px", borderRadius: "6px", display: "inline-flex", alignItems: "center", gap: "6px", cursor: "pointer", fontSize: "0.85rem", fontWeight: "500" }}
+              >
+                <Trash2 size={15} />
+                Delete Filtered
+              </button>
+            )}
 
           </div>
 
@@ -3310,7 +3361,7 @@ function AttendancePage({
       s.department_id === department &&
       s.batch_id === batch &&
       s.group_id === group &&
-      s.is_active
+      s.is_active !== false
   );
 
   function resetAttendance() {

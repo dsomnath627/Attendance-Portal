@@ -107,7 +107,7 @@ create table if not exists public.student_groups (
 create table if not exists public.students (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
-  student_id text not null,
+  student_id text unique not null,
   name text not null,
   slr text,
   department_id uuid references public.departments(id) on delete set null,
