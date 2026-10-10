@@ -110,22 +110,32 @@ export default function StudentDashboard({
         }
       }
 
-      // 4. Calculate attendance percentage
+      // 4. Calculate attendance percentage by finding student roster records matching profile_id or full_name
+      const { data: matchedRoster } = await supabase
+        .from("students")
+        .select("id")
+        .or(`profile_id.eq.${userProfile.id},name.ilike.%${userProfile.full_name || 'xyz'}%`);
+
+      const targetStudentIds: string[] = [userProfile.id];
+      if (matchedRoster) {
+        matchedRoster.forEach((s) => targetStudentIds.push(s.id));
+      }
+
       const { count: totalSessions } = await supabase
         .from("attendance_records")
         .select("*", { count: "exact", head: true })
-        .eq("student_id", userProfile.id);
+        .in("student_id", targetStudentIds);
 
       const { count: presentSessions } = await supabase
         .from("attendance_records")
         .select("*", { count: "exact", head: true })
-        .eq("student_id", userProfile.id)
+        .in("student_id", targetStudentIds)
         .eq("status", "P");
 
       if (totalSessions && totalSessions > 0) {
         setOverallAttendance(Math.round(((presentSessions || 0) / totalSessions) * 100));
       } else {
-        setOverallAttendance(94); // Healthy default score
+        setOverallAttendance(100);
       }
     } catch (err) {
       console.error("Error loading student dashboard:", err);

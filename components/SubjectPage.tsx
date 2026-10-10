@@ -110,11 +110,15 @@ export default function SubjectPage({
         .eq("subject_offering_id", offeringId);
       if (routData) setRoutines(routData as RoutineItem[]);
 
-      // 4. Load attendance summary records
-      const { data: attData } = await supabase
-        .from("attendance_sessions")
-        .select("id, attendance_date")
-        .order("attendance_date", { ascending: false });
+      // 4. Load attendance summary records for this subject offering or class
+      const classId = (offering as any)?.classes?.id;
+      let attQuery = supabase.from("attendance_sessions").select("id, attendance_date");
+      if (classId) {
+        attQuery = attQuery.or(`subject_offering_id.eq.${offeringId},class_id.eq.${classId}`);
+      } else {
+        attQuery = attQuery.eq("subject_offering_id", offeringId);
+      }
+      const { data: attData } = await attQuery.order("attendance_date", { ascending: false });
       if (attData) setAttendanceRecords(attData as any);
     } catch (err) {
       console.error("Error loading subject details:", err);

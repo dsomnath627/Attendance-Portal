@@ -32,13 +32,25 @@ $$;
 -- Trigger to automatically create profile record when user signs up
 create or replace function public.handle_new_user()
 returns trigger language plpgsql security definer set search_path = public as $$
+declare
+  requested_role text;
+  assigned_role text;
 begin
+  requested_role := coalesce(new.raw_user_meta_data->>'role', 'student');
+
+  -- Strict role sanitization: Never trust raw user metadata for admin/coordinator roles
+  if requested_role in ('teacher', 'student') then
+    assigned_role := requested_role;
+  else
+    assigned_role := 'student';
+  end if;
+
   insert into public.profiles (id, email, role, status, full_name)
   values (
     new.id,
     new.email,
-    coalesce(new.raw_user_meta_data->>'role', 'teacher'),
-    'approved',
+    assigned_role,
+    'pending', -- New registrations require Super Admin approval
     coalesce(new.raw_user_meta_data->>'full_name', split_part(new.email, '@', 1))
   )
   on conflict (id) do update
@@ -107,6 +119,7 @@ create table if not exists public.student_groups (
 create table if not exists public.students (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  profile_id uuid references public.profiles(id) on delete set null,
   student_id text unique not null,
   name text not null,
   slr text,
@@ -142,6 +155,8 @@ create table if not exists public.attendance_sessions (
   department_id uuid references public.departments(id) on delete set null,
   batch_id uuid references public.batches(id) on delete set null,
   group_id uuid references public.student_groups(id) on delete set null,
+  subject_offering_id uuid references public.subject_offerings(id) on delete set null,
+  class_id uuid references public.classes(id) on delete set null,
   created_at timestamptz default now()
 );
 

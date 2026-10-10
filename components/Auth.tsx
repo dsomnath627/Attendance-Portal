@@ -39,7 +39,7 @@ export default function Auth() {
         if (error) {
           setError(error.message);
         } else if (data?.user) {
-          setSuccess("Account created successfully! You can now sign in.");
+          setSuccess("Account registered! Your account is pending Super Admin verification before access is granted.");
           setIsSignUp(false);
         }
       } else {

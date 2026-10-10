@@ -37,16 +37,18 @@ export default function Page() {
       if (data) {
         setProfile({
           ...data,
-          status: data.status || "approved",
+          status: data.status || "pending",
         } as UserProfile);
       } else if (error) {
-        // Fallback profile if record doesn't exist yet
+        // Fallback profile if record doesn't exist yet (triggers create profile on signup)
+        const requestedRole = currentUser.user_metadata?.role;
+        const assignedRole: UserRole = (requestedRole === "teacher" || requestedRole === "student") ? requestedRole : "student";
         const defaultProfile: UserProfile = {
           id: currentUser.id,
           email: currentUser.email || "",
-          role: currentUser.user_metadata?.role || "teacher",
-          status: "approved",
-          full_name: currentUser.email?.split("@")[0] || "Teacher",
+          role: assignedRole,
+          status: "pending",
+          full_name: currentUser.email?.split("@")[0] || "User",
         };
         // Try creating fallback profile
         await supabase.from("profiles").upsert(defaultProfile);
@@ -57,8 +59,8 @@ export default function Page() {
       setProfile({
         id: currentUser.id,
         email: currentUser.email || "",
-        role: currentUser.user_metadata?.role || "teacher",
-        status: "approved",
+        role: "student",
+        status: "pending",
       });
     }
   }

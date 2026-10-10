@@ -328,6 +328,12 @@ export default function CoordinatorDashboard({
     ]);
     if (error) showError?.(error.message);
     else {
+      if (enrollRoll) {
+        await supabase
+          .from("students")
+          .update({ profile_id: enrollStudentId })
+          .eq("student_id", enrollRoll);
+      }
       notify?.("Student enrolled in class.");
       setEnrollRoll("");
       loadAllData();

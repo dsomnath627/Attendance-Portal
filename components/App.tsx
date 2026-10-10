@@ -3347,6 +3347,18 @@ function AttendancePage({
   const [processing, setProcessing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [verified, setVerified] = useState(false);
+  const [offerings, setOfferings] = useState<any[]>([]);
+  const [selectedOffering, setSelectedOffering] = useState<string>("");
+
+  useEffect(() => {
+    async function loadOfferings() {
+      const { data } = await supabase
+        .from("subject_offerings")
+        .select("id, class_id, subjects(name, code), classes(name)");
+      if (data) setOfferings(data);
+    }
+    loadOfferings();
+  }, []);
 
   const filteredBatches = batches.filter(
     (b) => b.department_id === department && b.is_active
@@ -3570,10 +3582,15 @@ function AttendancePage({
           return;
         }
 
+        const chosenOffering = offerings.find((o) => o.id === selectedOffering);
+        const classId = chosenOffering?.class_id || null;
+
         const { error: updateSessionError } = await supabase
           .from("attendance_sessions")
           .update({
             source_file_name: file?.name || null,
+            subject_offering_id: selectedOffering || null,
+            class_id: classId,
           })
           .eq("id", sessionId);
 
@@ -3582,6 +3599,9 @@ function AttendancePage({
           return;
         }
       } else {
+        const chosenOffering = offerings.find((o) => o.id === selectedOffering);
+        const classId = chosenOffering?.class_id || null;
+
         const { data, error } = await supabase
           .from("attendance_sessions")
           .insert({
@@ -3590,6 +3610,8 @@ function AttendancePage({
             department_id: department,
             batch_id: batch,
             group_id: group,
+            subject_offering_id: selectedOffering || null,
+            class_id: classId,
             source_file_name: file?.name || null,
             created_by: null,
           })
@@ -3739,6 +3761,21 @@ function AttendancePage({
               {filteredGroups.map((g) => (
                 <option key={g.id} value={g.id}>
                   {g.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label>Subject Offering (Optional)</label>
+            <select
+              value={selectedOffering}
+              onChange={(e) => setSelectedOffering(e.target.value)}
+            >
+              <option value="">Select Subject Offering</option>
+              {offerings.map((o) => (
+                <option key={o.id} value={o.id}>
+                  {o.subjects?.name} ({o.subjects?.code}) - {o.classes?.name}
                 </option>
               ))}
             </select>
