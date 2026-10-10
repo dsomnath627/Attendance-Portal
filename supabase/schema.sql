@@ -242,27 +242,23 @@ alter table public.workbook_meta enable row level security;
 
 -- Departments
 drop policy if exists "departments_isolation" on public.departments;
-create policy "departments_isolation" on public.departments for all to authenticated
-  using (user_id = auth.uid() or is_super_admin())
-  with check (user_id = auth.uid() or is_super_admin());
+create policy "Academic structure read access" on public.departments for select to authenticated using (true);
+create policy "Academic structure write access" on public.departments for all to authenticated using (is_super_admin() or exists (select 1 from public.profiles where id = auth.uid() and role = 'coordinator'));
 
 -- Batches
 drop policy if exists "batches_isolation" on public.batches;
-create policy "batches_isolation" on public.batches for all to authenticated
-  using (user_id = auth.uid() or is_super_admin())
-  with check (user_id = auth.uid() or is_super_admin());
+create policy "Academic structure read access" on public.batches for select to authenticated using (true);
+create policy "Academic structure write access" on public.batches for all to authenticated using (is_super_admin() or exists (select 1 from public.profiles where id = auth.uid() and role = 'coordinator'));
 
 -- Student Groups
 drop policy if exists "student_groups_isolation" on public.student_groups;
-create policy "student_groups_isolation" on public.student_groups for all to authenticated
-  using (user_id = auth.uid() or is_super_admin())
-  with check (user_id = auth.uid() or is_super_admin());
+create policy "Academic structure read access" on public.student_groups for select to authenticated using (true);
+create policy "Academic structure write access" on public.student_groups for all to authenticated using (is_super_admin() or exists (select 1 from public.profiles where id = auth.uid() and role = 'coordinator'));
 
 -- Students
 drop policy if exists "students_isolation" on public.students;
-create policy "students_isolation" on public.students for all to authenticated
-  using (user_id = auth.uid() or is_super_admin())
-  with check (user_id = auth.uid() or is_super_admin());
+create policy "Academic structure read access" on public.students for select to authenticated using (true);
+create policy "Academic structure write access" on public.students for all to authenticated using (is_super_admin() or exists (select 1 from public.profiles where id = auth.uid() and role = 'coordinator'));
 
 -- Assessments
 drop policy if exists "assessments_isolation" on public.assessments;

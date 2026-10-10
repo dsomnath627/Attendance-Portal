@@ -49,11 +49,23 @@ export default function StudentDashboard({
   async function loadStudentData() {
     setLoading(true);
     try {
-      // 1. Fetch student's class enrollment
+      // 1. Fetch student's institutional record
+      const { data: studentRecord } = await supabase
+        .from("students")
+        .select("id")
+        .eq("profile_id", userProfile.id)
+        .single();
+
+      if (!studentRecord) {
+         setLoading(false);
+         return; // User has no institutional record yet
+      }
+
+      // 1b. Fetch student's class enrollment using legacy_student_id
       const { data: enroll } = await supabase
         .from("class_enrollments")
         .select("class_id, classes(name)")
-        .eq("student_id", userProfile.id)
+        .eq("legacy_student_id", studentRecord.id)
         .single();
 
       if (enroll && enroll.classes) {
