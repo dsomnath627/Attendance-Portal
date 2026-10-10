@@ -118,32 +118,19 @@ export default function StudentDashboard({
         }
       }
 
-      // 4. Calculate attendance percentage by finding student roster records matching profile_id or full_name
-      const { data: matchedRoster } = await supabase
-        .from("students")
-        .select("id")
-        .or(`profile_id.eq.${userProfile.id},name.ilike.%${userProfile.full_name || 'xyz'}%`);
-
-      const targetStudentIds: string[] = [userProfile.id];
-      if (matchedRoster) {
-        matchedRoster.forEach((s) => targetStudentIds.push(s.id));
-      }
-
-      const { count: totalSessions } = await supabase
+      // 4. Calculate overall attendance using institutional student record ID
+      // Query all attendance_records for this student, scoped to class offerings
+      const { data: allRecords } = await supabase
         .from("attendance_records")
-        .select("*", { count: "exact", head: true })
-        .in("student_id", targetStudentIds);
+        .select("status, session_id")
+        .eq("student_id", studentRecord.id);
 
-      const { count: presentSessions } = await supabase
-        .from("attendance_records")
-        .select("*", { count: "exact", head: true })
-        .in("student_id", targetStudentIds)
-        .eq("status", "P");
-
-      if (totalSessions && totalSessions > 0) {
-        setOverallAttendance(Math.round(((presentSessions || 0) / totalSessions) * 100));
+      if (allRecords && allRecords.length > 0) {
+        const total = allRecords.length;
+        const present = allRecords.filter((r: any) => r.status === "P").length;
+        setOverallAttendance(Math.round((present / total) * 100));
       } else {
-        setOverallAttendance(100);
+        setOverallAttendance(100); // default when no sessions taken yet
       }
     } catch (err) {
       console.error("Error loading student dashboard:", err);

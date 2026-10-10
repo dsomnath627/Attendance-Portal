@@ -3,20 +3,11 @@
 import { useState, useEffect } from "react";
 import { supabase } from "@/lib/supabase";
 import type { UserProfile } from "@/app/page";
+import AttendanceTaking from "./AttendanceTaking";
+import StudentAttendanceView from "./StudentAttendanceView";
 import {
-  BookOpen,
-  CalendarCheck,
-  FileText,
-  ClipboardList,
-  HelpCircle,
-  BarChart3,
-  Clock,
-  ArrowLeft,
-  Users,
-  User,
-  Plus,
-  Calendar,
-  CheckCircle,
+  BookOpen, CalendarCheck, FileText, ClipboardList,
+  HelpCircle, BarChart3, Clock, ArrowLeft, Users,
 } from "lucide-react";
 
 type SubjectOfferingDetails = {
@@ -24,7 +15,9 @@ type SubjectOfferingDetails = {
   subject_name: string;
   subject_code: string;
   credits: number;
+  class_id: string;
   class_name: string;
+  teacher_id: string;
   teacher_name: string;
   semester_name: string;
   academic_year: string;
@@ -36,12 +29,6 @@ type RoutineItem = {
   start_time: string;
   end_time: string;
   room: string;
-};
-
-type AttendanceRecord = {
-  id: string;
-  attendance_date: string;
-  status: string;
 };
 
 export default function SubjectPage({
@@ -60,17 +47,23 @@ export default function SubjectPage({
   const [details, setDetails] = useState<SubjectOfferingDetails | null>(null);
   const [routines, setRoutines] = useState<RoutineItem[]>([]);
   const [enrolledCount, setEnrolledCount] = useState<number>(0);
-  const [attendanceRecords, setAttendanceRecords] = useState<AttendanceRecord[]>([]);
   const [loading, setLoading] = useState(true);
+
+  const isTeacherOrAdmin =
+    userProfile.role === "teacher" ||
+    userProfile.role === "super_admin" ||
+    userProfile.role === "coordinator";
+
+  const isStudent = userProfile.role === "student";
 
   async function loadSubjectData() {
     setLoading(true);
     try {
-      // 1. Load subject offering join details
-      const { data: offering, error } = await supabase
+      const { data: offering } = await supabase
         .from("subject_offerings")
         .select(`
           id,
+          teacher_id,
           subjects (name, code, credits),
           classes (id, name),
           profiles (full_name, email),
@@ -87,13 +80,14 @@ export default function SubjectPage({
           subject_name: obj.subjects?.name || "Subject",
           subject_code: obj.subjects?.code || "SUBJ",
           credits: obj.subjects?.credits || 4,
+          class_id: obj.classes?.id || "",
           class_name: obj.classes?.name || "Class",
+          teacher_id: obj.teacher_id || "",
           teacher_name: obj.profiles?.full_name || obj.profiles?.email || "Teacher",
           semester_name: obj.semesters?.name || "Semester",
           academic_year: obj.academic_years?.name || "Current Year",
         });
 
-        // 2. Count enrollments for this class
         if (obj.classes?.id) {
           const { count } = await supabase
             .from("class_enrollments")
@@ -103,23 +97,11 @@ export default function SubjectPage({
         }
       }
 
-      // 3. Load routines for this subject offering
       const { data: routData } = await supabase
         .from("routines")
         .select("*")
         .eq("subject_offering_id", offeringId);
       if (routData) setRoutines(routData as RoutineItem[]);
-
-      // 4. Load attendance summary records for this subject offering or class
-      const classId = (offering as any)?.classes?.id;
-      let attQuery = supabase.from("attendance_sessions").select("id, attendance_date");
-      if (classId) {
-        attQuery = attQuery.or(`subject_offering_id.eq.${offeringId},class_id.eq.${classId}`);
-      } else {
-        attQuery = attQuery.eq("subject_offering_id", offeringId);
-      }
-      const { data: attData } = await attQuery.order("attendance_date", { ascending: false });
-      if (attData) setAttendanceRecords(attData as any);
     } catch (err) {
       console.error("Error loading subject details:", err);
     }
@@ -129,6 +111,12 @@ export default function SubjectPage({
   useEffect(() => {
     loadSubjectData();
   }, [offeringId]);
+
+  // Determine if the current user is the assigned teacher for this offering
+  const isAssignedTeacher =
+    details?.teacher_id === userProfile.id ||
+    userProfile.role === "super_admin" ||
+    userProfile.role === "coordinator";
 
   return (
     <div className="subject-page-container">
@@ -190,6 +178,7 @@ export default function SubjectPage({
           gap: 6px;
           border-bottom: 3px solid transparent;
           transition: all 0.2s ease;
+          white-space: nowrap;
         }
         .subj-tab-btn.active {
           color: #111827;
@@ -229,7 +218,12 @@ export default function SubjectPage({
               {details?.subject_name || "Subject Name"}
             </h2>
             <div style={{ fontSize: "0.875rem", color: "#6b7280", marginTop: "4px" }}>
-              Class: <strong>{details?.class_name}</strong> | Teacher: <strong>{details?.teacher_name}</strong> | Credits: <strong>{details?.credits}</strong>
+              Class: <strong>{details?.class_name}</strong> ·{" "}
+              Teacher: <strong>{details?.teacher_name}</strong> ·{" "}
+              Credits: <strong>{details?.credits}</strong> ·{" "}
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                <Users size={13} /> {enrolledCount} students
+              </span>
             </div>
           </div>
         </div>
@@ -247,7 +241,8 @@ export default function SubjectPage({
           className={`subj-tab-btn ${activeTab === "attendance" ? "active" : ""}`}
           onClick={() => setActiveTab("attendance")}
         >
-          <CalendarCheck size={16} /> Attendance
+          <CalendarCheck size={16} />
+          {isTeacherOrAdmin ? "Take Attendance" : "My Attendance"}
         </button>
         <button
           className={`subj-tab-btn ${activeTab === "notes" ? "active" : ""}`}
@@ -281,12 +276,13 @@ export default function SubjectPage({
         </button>
       </div>
 
-      {/* CONTENT CARD */}
+      {/* CONTENT */}
       <div className="subject-card">
         {loading ? (
-          <div style={{ padding: "40px", textAlign: "center" }}>Loading Subject Details...</div>
+          <div style={{ padding: "40px", textAlign: "center" }}>Loading…</div>
         ) : (
           <>
+            {/* OVERVIEW */}
             {activeTab === "overview" && (
               <div>
                 <h3 style={{ marginTop: 0 }}>Subject Summary</h3>
@@ -303,28 +299,48 @@ export default function SubjectPage({
                     <div style={{ fontSize: "0.8rem", color: "#6b7280" }}>Semester</div>
                     <div style={{ fontSize: "1.2rem", fontWeight: "600", color: "#111827" }}>{details?.semester_name}</div>
                   </div>
+                  <div style={{ background: "#f9fafb", padding: "16px", borderRadius: "8px", border: "1px solid #e5e7eb" }}>
+                    <div style={{ fontSize: "0.8rem", color: "#6b7280" }}>Weekly Schedule</div>
+                    <div style={{ fontSize: "1rem", fontWeight: "600", color: "#111827" }}>
+                      {routines.length > 0
+                        ? routines.map((r) => `${r.day_of_week} ${r.start_time}`).join(", ")
+                        : "Not scheduled"}
+                    </div>
+                  </div>
                 </div>
               </div>
             )}
 
+            {/* ATTENDANCE */}
             {activeTab === "attendance" && (
-              <div>
-                <h3>Attendance History</h3>
-                {attendanceRecords.length === 0 ? (
+              <>
+                {/* Teacher / Admin: full attendance taking */}
+                {isTeacherOrAdmin && details?.class_id && (
+                  <AttendanceTaking
+                    offeringId={offeringId}
+                    classId={details.class_id}
+                    userProfile={userProfile}
+                    subjectName={details.subject_name}
+                    className={details.class_name}
+                  />
+                )}
+
+                {/* Student: view their own attendance */}
+                {isStudent && (
+                  <StudentAttendanceView
+                    offeringId={offeringId}
+                    userProfile={userProfile}
+                  />
+                )}
+
+                {/* Fallback if class not loaded */}
+                {isTeacherOrAdmin && !details?.class_id && (
                   <div className="empty-placeholder">
                     <CalendarCheck className="empty-icon" />
-                    <p>No attendance sessions recorded yet for this subject offering.</p>
+                    <p>Unable to load class data. Please try again.</p>
                   </div>
-                ) : (
-                  <ul style={{ paddingLeft: "20px" }}>
-                    {attendanceRecords.map((r) => (
-                      <li key={r.id} style={{ marginBottom: "8px" }}>
-                        Session Date: <strong>{r.attendance_date}</strong>
-                      </li>
-                    ))}
-                  </ul>
                 )}
-              </div>
+              </>
             )}
 
             {activeTab === "notes" && (
@@ -375,7 +391,7 @@ export default function SubjectPage({
                       <div key={r.id} style={{ background: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: "8px", padding: "14px" }}>
                         <div style={{ fontWeight: 700, color: "#111827" }}>{r.day_of_week}</div>
                         <div style={{ fontSize: "0.875rem", color: "#4b5563", marginTop: "4px" }}>
-                          🕒 {r.start_time} - {r.end_time}
+                          🕒 {r.start_time} – {r.end_time}
                         </div>
                         <div style={{ fontSize: "0.85rem", color: "#6b7280", marginTop: "2px" }}>
                           📍 {r.room || "Room N/A"}
