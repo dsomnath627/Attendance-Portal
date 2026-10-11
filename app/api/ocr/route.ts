@@ -1,7 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
-const MODEL_NAME = "gemini-1.5-flash";
+// Use Gemini 2.5 Flash as the primary vision model, with resilient fallbacks
+const PRIMARY_MODEL = process.env.GEMINI_MODEL || "gemini-3.8-flash";
+const FALLBACK_MODELS = [
+  "gemini-flash-latest",
+  "gemini-3.5-flash",
+  "gemini-3.8-flash",
+  "gemini-2.0-flash",
+  "gemini-1.5-flash",
+];
 
 export async function POST(request: NextRequest) {
   const apiKey = process.env.GEMINI_API_KEY;
@@ -30,7 +38,6 @@ export async function POST(request: NextRequest) {
     const mimeType = imageFile.type || "image/jpeg";
 
     const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: MODEL_NAME });
 
     const prompt = `You are an OCR assistant for an academic attendance system.
 Your task is to extract ALL 4-digit numeric codes written on this attendance sheet image.
@@ -49,17 +56,43 @@ If no codes are found, return: {"codes": []}
 
 Do not include any explanation, markdown, or extra text — only valid JSON.`;
 
-    const result = await model.generateContent([
-      prompt,
-      {
-        inlineData: {
-          mimeType,
-          data: base64Image,
-        },
-      },
-    ]);
+    const modelsToTry = [PRIMARY_MODEL, ...FALLBACK_MODELS.filter((m) => m !== PRIMARY_MODEL)];
+    let responseText = "";
+    let usedModel = PRIMARY_MODEL;
+    let lastError: any = null;
 
-    const responseText = result.response.text().trim();
+    for (const modelCandidate of modelsToTry) {
+      try {
+        const model = genAI.getGenerativeModel({
+          model: modelCandidate,
+          generationConfig: {
+            responseMimeType: "application/json",
+          },
+        });
+
+        const result = await model.generateContent([
+          prompt,
+          {
+            inlineData: {
+              mimeType,
+              data: base64Image,
+            },
+          },
+        ]);
+
+        responseText = result.response.text().trim();
+        usedModel = modelCandidate;
+        lastError = null;
+        break; // Successfully generated content
+      } catch (err: any) {
+        lastError = err;
+        console.warn(`Gemini OCR with model ${modelCandidate} failed, trying fallback:`, err?.message || err);
+      }
+    }
+
+    if (!responseText && lastError) {
+      throw lastError;
+    }
 
     // Strip markdown code fences if the model wrapped the JSON.
     const jsonText = responseText
@@ -78,6 +111,7 @@ Do not include any explanation, markdown, or extra text — only valid JSON.`;
           error: "Gemini returned an unexpected format.",
           raw: responseText,
           codes: [],
+          model: usedModel,
         },
         { status: 200 }
       );
@@ -87,7 +121,7 @@ Do not include any explanation, markdown, or extra text — only valid JSON.`;
       .map((c: string) => String(c).trim())
       .filter((c: string) => /^\d{4}$/.test(c));
 
-    return NextResponse.json({ codes, raw: responseText });
+    return NextResponse.json({ codes, raw: responseText, model: usedModel });
   } catch (err) {
     console.error("Gemini OCR error:", err);
     const message = err instanceof Error ? err.message : "Unknown error";

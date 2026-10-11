@@ -428,17 +428,9 @@ drop policy if exists "Academic structure read access" on public.subjects;
 create policy "Academic structure read access" on public.subjects for select to authenticated using (true);
 
 drop policy if exists "Academic structure read access" on public.subject_offerings;
-create policy "Academic structure read access" on public.subject_offerings for select to authenticated using (
-  is_super_admin()
-  or exists (select 1 from public.profiles where id = auth.uid() and role = 'coordinator')
-  or teacher_id = auth.uid()
-  or exists (
-    select 1 from public.class_enrollments ce
-    join public.students s on ce.legacy_student_id = s.id
-    where ce.class_id = subject_offerings.class_id
-    and s.profile_id = auth.uid()
-  )
-);
+-- All authenticated users can read subject_offerings (non-sensitive academic metadata).
+-- Write access remains restricted to coordinator/super_admin only.
+create policy "Academic structure read access" on public.subject_offerings for select to authenticated using (true);
 
 drop policy if exists "Academic structure read access" on public.class_enrollments;
 create policy "Academic structure read access" on public.class_enrollments for select to authenticated using (true);

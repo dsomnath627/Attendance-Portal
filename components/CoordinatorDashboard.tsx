@@ -35,6 +35,89 @@ export default function CoordinatorDashboard({
   const [searchQuery, setSearchQuery] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [formLoading, setFormLoading] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  };
+
+  function getTableForSubTab(tab: SubTab): string | null {
+    switch (tab) {
+      case "departments": return "departments";
+      case "programs": return "programs";
+      case "academic_years": return "academic_years";
+      case "semesters": return "semesters";
+      case "batches": return "batches";
+      case "groups": return "student_groups";
+      case "classes": return "classes";
+      case "subjects": return "subjects";
+      case "assignments": return "subject_offerings";
+      case "students": return "class_enrollments";
+      case "routines": return "routines";
+      case "roster": return "students";
+      default: return null;
+    }
+  }
+
+  function selectDuplicateGroups() {
+    const seen = new Set<string>();
+    const dupIds: string[] = [];
+
+    // Sort by created_at or id so we keep the first/oldest one
+    const sorted = [...groups].sort((a, b) => {
+      if (a.created_at && b.created_at) return a.created_at.localeCompare(b.created_at);
+      return a.id.localeCompare(b.id);
+    });
+
+    sorted.forEach((g) => {
+      const key = `${g.batch_id || ""}_${g.name.trim().toLowerCase()}`;
+      if (seen.has(key)) {
+        dupIds.push(g.id);
+      } else {
+        seen.add(key);
+      }
+    });
+
+    if (dupIds.length === 0) {
+      notify?.("No duplicate groups found across your batches!");
+    } else {
+      setSelectedIds(dupIds);
+      notify?.(`Identified ${dupIds.length} duplicate group(s)! Checked them for deletion. Review and click 'Delete Selected'.`);
+    }
+  }
+
+  async function handleBulkDelete() {
+    const table = getTableForSubTab(subTab);
+    if (!table || selectedIds.length === 0) return;
+
+    const count = selectedIds.length;
+    const confirmed = window.confirm(
+      `Are you sure you want to permanently delete all ${count} selected item(s) from ${subTab.replace("_", " ")}? This action cannot be undone.`
+    );
+    if (!confirmed) return;
+
+    setFormLoading(true);
+    try {
+      const chunkSize = 100;
+      let deletedCount = 0;
+      for (let i = 0; i < selectedIds.length; i += chunkSize) {
+        const chunk = selectedIds.slice(i, i + chunkSize);
+        const { error } = await supabase.from(table).delete().in("id", chunk);
+        if (error) throw error;
+        deletedCount += chunk.length;
+      }
+
+      notify?.(`Successfully deleted ${deletedCount} item(s).`);
+      setSelectedIds([]);
+      await loadAllData();
+      if (onReload) onReload();
+    } catch (err: any) {
+      console.error("Bulk delete error:", err);
+      showError?.(err.message || "Failed to delete selected items. Some may be referenced by other records.");
+    } finally {
+      setFormLoading(false);
+    }
+  }
 
   // Entities state
   const [departments, setDepartments] = useState<Department[]>([]);
@@ -176,6 +259,7 @@ export default function CoordinatorDashboard({
   const handleTabChange = (tab: SubTab) => {
     setSubTab(tab);
     setSearchQuery("");
+    setSelectedIds([]);
     resetForms();
   };
 
@@ -415,12 +499,85 @@ export default function CoordinatorDashboard({
     else { notify?.("Routine entry added."); resetForms(); loadAllData(); }
   }
 
-  const renderFilter = () => (
-    <div className="filter-bar">
-      <Search size={18} color="#6b7280" />
-      <input type="text" placeholder="Filter records..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
-    </div>
-  );
+  const renderFilter = (currentList?: { id: string }[]) => {
+    const table = getTableForSubTab(subTab);
+    const hasItems = currentList && currentList.length > 0;
+    const allSelected = hasItems && currentList.every(item => selectedIds.includes(item.id));
+    const someSelected = selectedIds.length > 0;
+
+    return (
+      <div className="filter-and-bulk-bar">
+        <div className="filter-bar">
+          <Search size={18} color="#6b7280" />
+          <input
+            type="text"
+            placeholder={`Filter ${subTab.replace("_", " ")}...`}
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+          />
+        </div>
+
+        {table && (
+          <div className="bulk-actions-toolbar">
+            <div className="bulk-selection-controls">
+              {hasItems && (
+                <label className="select-all-label">
+                  <input
+                    type="checkbox"
+                    className="tik-checkbox"
+                    checked={allSelected}
+                    onChange={() => {
+                      if (allSelected) {
+                        setSelectedIds([]);
+                      } else {
+                        setSelectedIds(currentList.map(item => item.id));
+                      }
+                    }}
+                  />
+                  <span>Select All ({currentList.length})</span>
+                </label>
+              )}
+
+              {subTab === "groups" && (
+                <button
+                  type="button"
+                  className="quick-action-btn"
+                  onClick={selectDuplicateGroups}
+                  title="Automatically finds groups in the same batch with identical names and selects the duplicates"
+                >
+                  ⚡ Select Duplicate Groups
+                </button>
+              )}
+            </div>
+
+            {someSelected && (
+              <div className="bulk-execute-box">
+                <span className="selected-badge">
+                  ✓ {selectedIds.length} selected
+                </span>
+                <button
+                  type="button"
+                  className="bulk-deselect-btn"
+                  onClick={() => setSelectedIds([])}
+                >
+                  Clear
+                </button>
+                <button
+                  type="button"
+                  className="bulk-delete-btn"
+                  disabled={formLoading}
+                  onClick={handleBulkDelete}
+                >
+                  <Trash2 size={15} />
+                  Delete Selected ({selectedIds.length})
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div className="coord-dashboard">
@@ -437,10 +594,26 @@ export default function CoordinatorDashboard({
         .form-group input, .form-group select { padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 0.875rem; background: #f9fafb; }
         .form-group input:focus, .form-group select:focus { border-color: #3b82f6; outline: none; background: #fff; }
         .grid-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; margin-top: 16px; }
-        .item-card { background: #ffffff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 14px; position: relative; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+        .item-card { background: #ffffff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 14px; position: relative; box-shadow: 0 1px 3px rgba(0,0,0,0.05); transition: all 0.15s ease; }
+        .item-card.selected { border-color: #3b82f6; background-color: #f0f7ff; box-shadow: 0 0 0 1px #3b82f6; }
+        .card-checkbox { position: absolute; top: 14px; left: 12px; z-index: 2; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+        .tik-checkbox { width: 17px; height: 17px; cursor: pointer; accent-color: #2563eb; border-radius: 4px; }
+        .filter-and-bulk-bar { display: flex; flex-direction: column; gap: 10px; margin-bottom: 16px; }
+        .bulk-actions-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px 14px; }
+        .bulk-selection-controls { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+        .select-all-label { display: inline-flex; align-items: center; gap: 8px; font-size: 0.85rem; font-weight: 600; color: #374151; cursor: pointer; user-select: none; }
+        .quick-action-btn { background: #fef3c7; color: #92400e; border: 1px solid #fde68a; padding: 5px 12px; border-radius: 6px; font-size: 0.8rem; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; transition: all 0.15s; }
+        .quick-action-btn:hover { background: #fde68a; color: #78350f; }
+        .bulk-execute-box { display: flex; align-items: center; gap: 10px; }
+        .selected-badge { background: #dbeafe; color: #1e40af; font-size: 0.8rem; font-weight: 700; padding: 4px 10px; border-radius: 12px; }
+        .bulk-deselect-btn { background: transparent; border: 1px solid #d1d5db; color: #4b5563; padding: 5px 10px; border-radius: 6px; font-size: 0.8rem; font-weight: 600; cursor: pointer; }
+        .bulk-deselect-btn:hover { background: #f3f4f6; color: #111827; }
+        .bulk-delete-btn { display: inline-flex; align-items: center; gap: 6px; background: #fee2e2; color: #b91c1c; border: 1px solid #fca5a5; padding: 6px 14px; border-radius: 6px; font-size: 0.85rem; font-weight: 700; cursor: pointer; transition: all 0.15s; }
+        .bulk-delete-btn:hover { background: #dc2626; color: #ffffff; border-color: #dc2626; }
+        .bulk-delete-btn:disabled { opacity: 0.5; cursor: not-allowed; }
         .item-card.inactive { opacity: 0.6; background: #f3f4f6; }
-        .item-title { font-weight: 700; color: #111827; font-size: 0.95rem; margin-bottom: 4px; padding-right: 60px; }
-        .item-sub { font-size: 0.8rem; color: #6b7280; margin-top: 2px; }
+        .item-title { font-weight: 700; color: #111827; font-size: 0.95rem; margin-bottom: 4px; padding-left: 26px; padding-right: 65px; }
+        .item-sub { font-size: 0.8rem; color: #6b7280; margin-top: 2px; padding-left: 26px; }
         .actions { position: absolute; top: 12px; right: 12px; display: flex; gap: 6px; }
         .icon-btn { background: #f3f4f6; border: 1px solid #e5e7eb; border-radius: 4px; color: #4b5563; cursor: pointer; padding: 4px; display: flex; align-items: center; justify-content: center; }
         .icon-btn:hover { background: #e5e7eb; color: #111827; }
@@ -508,11 +681,19 @@ export default function CoordinatorDashboard({
                 <button className="primary-btn" disabled={formLoading} onClick={saveDepartment}>{editingId ? <CheckCircle size={16}/> : <Plus size={16} />} {editingId ? "Update" : "Create"} Department</button>
                 {editingId && <button className="secondary-btn" onClick={resetForms}>Cancel</button>}
               </div>
-              <div style={{ marginTop: "24px" }}>{renderFilter()}</div>
+              <div style={{ marginTop: "24px" }}>{renderFilter(filtered)}</div>
               {filtered.length === 0 ? <div className="empty-state">No departments found.</div> : (
                 <div className="grid-list">
                   {filtered.map(d => (
-                    <div className={`item-card ${d.is_active === false ? "inactive" : ""}`} key={d.id}>
+                    <div className={`item-card ${d.is_active === false ? "inactive" : ""} ${selectedIds.includes(d.id) ? "selected" : ""}`} key={d.id}>
+                        <label className="card-checkbox" onClick={e => e.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            className="tik-checkbox"
+                            checked={selectedIds.includes(d.id)}
+                            onChange={() => toggleSelect(d.id)}
+                          />
+                        </label>
                       <div className="actions">
                         <button className="icon-btn" title="Edit" onClick={() => handleEdit("departments", d)}><Edit size={14} /></button>
                         <button className="icon-btn" title={d.is_active === false ? "Activate" : "Deactivate"} onClick={() => toggleStatus("departments", d.id, d.is_active !== false)}>{d.is_active === false ? <Power size={14} /> : <PowerOff size={14} />}</button>
@@ -541,13 +722,21 @@ export default function CoordinatorDashboard({
                 <button className="primary-btn" disabled={formLoading} onClick={saveProgram}>{editingId ? <CheckCircle size={16}/> : <Plus size={16} />} {editingId ? "Update" : "Create"} Program</button>
                 {editingId && <button className="secondary-btn" onClick={resetForms}>Cancel</button>}
               </div>
-              <div style={{ marginTop: "24px" }}>{renderFilter()}</div>
+              <div style={{ marginTop: "24px" }}>{renderFilter(filtered)}</div>
               {filtered.length === 0 ? <div className="empty-state">No programs found.</div> : (
                 <div className="grid-list">
                   {filtered.map(p => {
                     const dept = departments.find(d => d.id === p.department_id);
                     return (
-                    <div className="item-card" key={p.id}>
+                    <div className={`item-card ${selectedIds.includes(p.id) ? "selected" : ""}`} key={p.id}>
+                        <label className="card-checkbox" onClick={e => e.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            className="tik-checkbox"
+                            checked={selectedIds.includes(p.id)}
+                            onChange={() => toggleSelect(p.id)}
+                          />
+                        </label>
                       <div className="actions">
                         <button className="icon-btn" title="Edit" onClick={() => handleEdit("programs", p)}><Edit size={14} /></button>
                         <button className="icon-btn delete" title="Delete" onClick={() => deleteRecord("programs", p.id)}><Trash2 size={14} /></button>
@@ -575,11 +764,19 @@ export default function CoordinatorDashboard({
                 <button className="primary-btn" disabled={formLoading} onClick={saveAcademicYear}>{editingId ? <CheckCircle size={16}/> : <Plus size={16} />} {editingId ? "Update" : "Create"} Year</button>
                 {editingId && <button className="secondary-btn" onClick={resetForms}>Cancel</button>}
               </div>
-              <div style={{ marginTop: "24px" }}>{renderFilter()}</div>
+              <div style={{ marginTop: "24px" }}>{renderFilter(filtered)}</div>
               {filtered.length === 0 ? <div className="empty-state">No academic years found.</div> : (
                 <div className="grid-list">
                   {filtered.map(y => (
-                    <div className={`item-card ${!y.is_current ? "inactive" : ""}`} key={y.id}>
+                    <div className={`item-card ${!y.is_current ? "inactive" : ""} ${selectedIds.includes(y.id) ? "selected" : ""}`} key={y.id}>
+                        <label className="card-checkbox" onClick={e => e.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            className="tik-checkbox"
+                            checked={selectedIds.includes(y.id)}
+                            onChange={() => toggleSelect(y.id)}
+                          />
+                        </label>
                       <div className="actions">
                         <button className="icon-btn" title="Edit" onClick={() => handleEdit("academic_years", y)}><Edit size={14} /></button>
                         <button className="icon-btn" title={y.is_current ? "Set Inactive" : "Set Active"} onClick={() => toggleStatus("academic_years", y.id, y.is_current || false)}>{!y.is_current ? <Power size={14} /> : <PowerOff size={14} />}</button>
@@ -606,11 +803,19 @@ export default function CoordinatorDashboard({
                 <button className="primary-btn" disabled={formLoading} onClick={saveSemester}>{editingId ? <CheckCircle size={16}/> : <Plus size={16} />} {editingId ? "Update" : "Create"} Semester</button>
                 {editingId && <button className="secondary-btn" onClick={resetForms}>Cancel</button>}
               </div>
-              <div style={{ marginTop: "24px" }}>{renderFilter()}</div>
+              <div style={{ marginTop: "24px" }}>{renderFilter(filtered)}</div>
               {filtered.length === 0 ? <div className="empty-state">No semesters found.</div> : (
                 <div className="grid-list">
                   {filtered.map(s => (
-                    <div className={`item-card ${s.is_active === false ? "inactive" : ""}`} key={s.id}>
+                    <div className={`item-card ${s.is_active === false ? "inactive" : ""} ${selectedIds.includes(s.id) ? "selected" : ""}`} key={s.id}>
+                        <label className="card-checkbox" onClick={e => e.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            className="tik-checkbox"
+                            checked={selectedIds.includes(s.id)}
+                            onChange={() => toggleSelect(s.id)}
+                          />
+                        </label>
                       <div className="actions">
                         <button className="icon-btn" title="Edit" onClick={() => handleEdit("semesters", s)}><Edit size={14} /></button>
                         <button className="icon-btn" title={s.is_active === false ? "Activate" : "Deactivate"} onClick={() => toggleStatus("semesters", s.id, s.is_active !== false)}>{s.is_active === false ? <Power size={14} /> : <PowerOff size={14} />}</button>
@@ -638,13 +843,21 @@ export default function CoordinatorDashboard({
                 <button className="primary-btn" disabled={formLoading} onClick={saveBatch}>{editingId ? <CheckCircle size={16}/> : <Plus size={16} />} {editingId ? "Update" : "Create"} Batch</button>
                 {editingId && <button className="secondary-btn" onClick={resetForms}>Cancel</button>}
               </div>
-              <div style={{ marginTop: "24px" }}>{renderFilter()}</div>
+              <div style={{ marginTop: "24px" }}>{renderFilter(filtered)}</div>
               {filtered.length === 0 ? <div className="empty-state">No batches found.</div> : (
                 <div className="grid-list">
                   {filtered.map(b => {
                     const dept = departments.find(d => d.id === b.department_id);
                     return (
-                    <div className={`item-card ${b.is_active === false ? "inactive" : ""}`} key={b.id}>
+                    <div className={`item-card ${b.is_active === false ? "inactive" : ""} ${selectedIds.includes(b.id) ? "selected" : ""}`} key={b.id}>
+                        <label className="card-checkbox" onClick={e => e.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            className="tik-checkbox"
+                            checked={selectedIds.includes(b.id)}
+                            onChange={() => toggleSelect(b.id)}
+                          />
+                        </label>
                       <div className="actions">
                         <button className="icon-btn" title="Edit" onClick={() => handleEdit("batches", b)}><Edit size={14} /></button>
                         <button className="icon-btn" title={b.is_active === false ? "Activate" : "Deactivate"} onClick={() => toggleStatus("batches", b.id, b.is_active !== false)}>{b.is_active === false ? <Power size={14} /> : <PowerOff size={14} />}</button>
@@ -682,14 +895,22 @@ export default function CoordinatorDashboard({
                 <button className="primary-btn" disabled={formLoading} onClick={saveGroup}>{editingId ? <CheckCircle size={16}/> : <Plus size={16} />} {editingId ? "Update" : "Create"} Group</button>
                 {editingId && <button className="secondary-btn" onClick={resetForms}>Cancel</button>}
               </div>
-              <div style={{ marginTop: "24px" }}>{renderFilter()}</div>
+              <div style={{ marginTop: "24px" }}>{renderFilter(filtered)}</div>
               {filtered.length === 0 ? <div className="empty-state">No groups found.</div> : (
                 <div className="grid-list">
                   {filtered.map(g => {
                     const batch = batches.find(b => b.id === g.batch_id);
                     const dept = batch ? departments.find(d => d.id === batch.department_id) : null;
                     return (
-                      <div className={`item-card ${g.is_active === false ? "inactive" : ""}`} key={g.id}>
+                      <div className={`item-card ${g.is_active === false ? "inactive" : ""} ${selectedIds.includes(g.id) ? "selected" : ""}`} key={g.id}>
+                        <label className="card-checkbox" onClick={e => e.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            className="tik-checkbox"
+                            checked={selectedIds.includes(g.id)}
+                            onChange={() => toggleSelect(g.id)}
+                          />
+                        </label>
                         <div className="actions">
                           <button className="icon-btn" title="Edit" onClick={() => handleEdit("groups", g)}><Edit size={14} /></button>
                           <button className="icon-btn" title={g.is_active === false ? "Activate" : "Deactivate"} onClick={() => toggleStatus("student_groups", g.id, g.is_active !== false)}>{g.is_active === false ? <Power size={14} /> : <PowerOff size={14} />}</button>
@@ -726,14 +947,22 @@ export default function CoordinatorDashboard({
                 <button className="primary-btn" disabled={formLoading} onClick={saveClass}>{editingId ? <CheckCircle size={16}/> : <Plus size={16} />} {editingId ? "Update" : "Create"} Class</button>
                 {editingId && <button className="secondary-btn" onClick={resetForms}>Cancel</button>}
               </div>
-              <div style={{ marginTop: "24px" }}>{renderFilter()}</div>
+              <div style={{ marginTop: "24px" }}>{renderFilter(filtered)}</div>
               {filtered.length === 0 ? <div className="empty-state">No classes found.</div> : (
                 <div className="grid-list">
                   {filtered.map(c => {
                     const batch = batches.find(b => b.id === c.batch_id);
                     const dept = batch ? departments.find(d => d.id === batch.department_id) : null;
                     return (
-                    <div className={`item-card ${c.is_active === false ? "inactive" : ""}`} key={c.id}>
+                    <div className={`item-card ${c.is_active === false ? "inactive" : ""} ${selectedIds.includes(c.id) ? "selected" : ""}`} key={c.id}>
+                        <label className="card-checkbox" onClick={e => e.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            className="tik-checkbox"
+                            checked={selectedIds.includes(c.id)}
+                            onChange={() => toggleSelect(c.id)}
+                          />
+                        </label>
                       <div className="actions">
                         <button className="icon-btn" title="Edit" onClick={() => handleEdit("classes", c)}><Edit size={14} /></button>
                         <button className="icon-btn" title={c.is_active === false ? "Activate" : "Deactivate"} onClick={() => toggleStatus("classes", c.id, c.is_active !== false)}>{c.is_active === false ? <Power size={14} /> : <PowerOff size={14} />}</button>
@@ -766,14 +995,22 @@ export default function CoordinatorDashboard({
                 <button className="primary-btn" disabled={formLoading} onClick={saveSubject}>{editingId ? <CheckCircle size={16}/> : <Plus size={16} />} {editingId ? "Update" : "Create"} Subject</button>
                 {editingId && <button className="secondary-btn" onClick={resetForms}>Cancel</button>}
               </div>
-              <div style={{ marginTop: "24px" }}>{renderFilter()}</div>
+              <div style={{ marginTop: "24px" }}>{renderFilter(filtered)}</div>
               {filtered.length === 0 ? <div className="empty-state">No subjects found.</div> : (
                 <div className="grid-list">
                   {filtered.map(s => {
                     const dept = departments.find(d => d.id === s.department_id);
                     const sem = semesters.find(sem => sem.id === s.semester_id);
                     return (
-                    <div className={`item-card ${s.is_active === false ? "inactive" : ""}`} key={s.id}>
+                    <div className={`item-card ${s.is_active === false ? "inactive" : ""} ${selectedIds.includes(s.id) ? "selected" : ""}`} key={s.id}>
+                        <label className="card-checkbox" onClick={e => e.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            className="tik-checkbox"
+                            checked={selectedIds.includes(s.id)}
+                            onChange={() => toggleSelect(s.id)}
+                          />
+                        </label>
                       <div className="actions">
                         <button className="icon-btn" title="Edit" onClick={() => handleEdit("subjects", s)}><Edit size={14} /></button>
                         <button className="icon-btn" title={s.is_active === false ? "Activate" : "Deactivate"} onClick={() => toggleStatus("subjects", s.id, s.is_active !== false)}>{s.is_active === false ? <Power size={14} /> : <PowerOff size={14} />}</button>
@@ -811,7 +1048,7 @@ export default function CoordinatorDashboard({
               </div>
               <button className="primary-btn" disabled={formLoading} onClick={saveSubjectOffering}>{editingId ? <CheckCircle size={16}/> : <Plus size={16} />} {editingId ? "Update Assignment" : "Assign Teacher"}</button>
               {editingId && <button className="secondary-btn" onClick={resetForms}>Cancel</button>}
-              <div style={{ marginTop: "24px" }}>{renderFilter()}</div>
+              <div style={{ marginTop: "24px" }}>{renderFilter(filtered)}</div>
               {filtered.length === 0 ? <div className="empty-state">No assignments found.</div> : (
                 <div className="grid-list">
                   {filtered.map(so => {
@@ -821,7 +1058,15 @@ export default function CoordinatorDashboard({
                     const sem = semesters.find(sem => sem.id === so.semester_id);
                     const yr = academicYears.find(y => y.id === so.academic_year_id);
                     return (
-                      <div className={`item-card ${so.is_active === false ? "inactive" : ""}`} key={so.id}>
+                      <div className={`item-card ${so.is_active === false ? "inactive" : ""} ${selectedIds.includes(so.id) ? "selected" : ""}`} key={so.id}>
+                        <label className="card-checkbox" onClick={e => e.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            className="tik-checkbox"
+                            checked={selectedIds.includes(so.id)}
+                            onChange={() => toggleSelect(so.id)}
+                          />
+                        </label>
                         <div className="actions">
                           <button className="icon-btn" title="Edit" onClick={() => handleEdit("subject_offerings", so)}><Edit size={14} /></button>
                           <button className="icon-btn" title={so.is_active === false ? "Activate" : "Deactivate"} onClick={() => toggleStatus("subject_offerings", so.id, so.is_active !== false)}>{so.is_active === false ? <Power size={14} /> : <PowerOff size={14} />}</button>
@@ -860,7 +1105,7 @@ export default function CoordinatorDashboard({
               <button className="primary-btn" disabled={formLoading} onClick={saveRosterStudent}>{editingId ? <CheckCircle size={16}/> : <Plus size={16} />} {editingId ? "Update Student" : "Add Student"}</button>
               {editingId && <button className="secondary-btn" onClick={resetForms}>Cancel</button>}
               
-              <div style={{ marginTop: "24px" }}>{renderFilter()}</div>
+              <div style={{ marginTop: "24px" }}>{renderFilter(filtered)}</div>
               {filtered.length === 0 ? <div className="empty-state">No students found in roster.</div> : (
                 <div className="grid-list">
                   {filtered.map(st => {
@@ -868,7 +1113,15 @@ export default function CoordinatorDashboard({
                     const b = batches.find(b => b.id === st.batch_id);
                     const g = groups.find(g => g.id === st.group_id);
                     return (
-                      <div className="item-card" key={st.id}>
+                      <div className={`item-card ${selectedIds.includes(st.id) ? "selected" : ""}`} key={st.id}>
+                        <label className="card-checkbox" onClick={e => e.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            className="tik-checkbox"
+                            checked={selectedIds.includes(st.id)}
+                            onChange={() => toggleSelect(st.id)}
+                          />
+                        </label>
                         <div className="actions">
                           <button className="icon-btn" title="Edit" onClick={() => handleEdit("roster", st)}><Edit size={14} /></button>
                           <button className="icon-btn delete" onClick={() => deleteRecord("students", st.id)}><Trash2 size={14} /></button>
@@ -901,14 +1154,22 @@ export default function CoordinatorDashboard({
                 <div className="form-group"><label>Roll Number / Code</label><input placeholder="e.g. BCS-01" value={enrollRoll} onChange={e => setEnrollRoll(e.target.value)} /></div>
               </div>
               <button className="primary-btn" disabled={formLoading} onClick={enrollStudent}><Plus size={16} /> Enroll Student</button>
-              <div style={{ marginTop: "24px" }}>{renderFilter()}</div>
+              <div style={{ marginTop: "24px" }}>{renderFilter(filtered)}</div>
               {filtered.length === 0 ? <div className="empty-state">No enrollments found.</div> : (
                 <div className="grid-list">
                   {filtered.map(en => {
                     const st = rosterStudents.find(s => s.id === en.legacy_student_id);
                     const c = classes.find(cls => cls.id === en.class_id);
                     return (
-                      <div className="item-card" key={en.id}>
+                      <div className={`item-card ${selectedIds.includes(en.id) ? "selected" : ""}`} key={en.id}>
+                        <label className="card-checkbox" onClick={e => e.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            className="tik-checkbox"
+                            checked={selectedIds.includes(en.id)}
+                            onChange={() => toggleSelect(en.id)}
+                          />
+                        </label>
                         <div className="actions"><button className="icon-btn delete" onClick={() => deleteRecord("class_enrollments", en.id)}><Trash2 size={14} /></button></div>
                         <div className="item-title">{st?.name || "Unknown Student"}</div>
                         <div className="item-sub">Class: {c?.name} | Roll: {en.roll_number || "N/A"} | ID: {st?.student_id || "N/A"}</div>
@@ -950,7 +1211,7 @@ export default function CoordinatorDashboard({
               </div>
               <button className="primary-btn" disabled={formLoading} onClick={saveRoutineEntry}>{editingId ? <CheckCircle size={16}/> : <Plus size={16} />} {editingId ? "Update Routine" : "Add Routine"}</button>
               {editingId && <button className="secondary-btn" onClick={resetForms}>Cancel</button>}
-              <div style={{ marginTop: "24px" }}>{renderFilter()}</div>
+              <div style={{ marginTop: "24px" }}>{renderFilter(filtered)}</div>
               {filtered.length === 0 ? <div className="empty-state">No routines found.</div> : (
                 <div className="grid-list">
                   {filtered.map(r => {
@@ -959,7 +1220,15 @@ export default function CoordinatorDashboard({
                     const offering = subjectOfferings.find(so => so.id === r.subject_offering_id);
                     const s = subjects.find(subj => subj.id === offering?.subject_id);
                     return (
-                      <div className="item-card" key={r.id}>
+                      <div className={`item-card ${selectedIds.includes(r.id) ? "selected" : ""}`} key={r.id}>
+                        <label className="card-checkbox" onClick={e => e.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            className="tik-checkbox"
+                            checked={selectedIds.includes(r.id)}
+                            onChange={() => toggleSelect(r.id)}
+                          />
+                        </label>
                         <div className="actions">
                           <button className="icon-btn" title="Edit" onClick={() => handleEdit("routines", r)}><Edit size={14} /></button>
                           <button className="icon-btn delete" onClick={() => deleteRecord("routines", r.id)}><Trash2 size={14} /></button>

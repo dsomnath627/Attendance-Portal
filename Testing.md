@@ -16,6 +16,7 @@ This guide provides a comprehensive checklist to verify the core academic, atten
    - `supabase/schema.sql` (Base Schema)
    - `supabase/migration_attendance.sql` (Attendance Schema update)
    - `supabase/migration_marks_excel.sql` (Marks & Assessments Schema update)
+   - `supabase/migration_fix_student_import_rls.sql` (Student & Group Import Permissions update)
 
 3. **Build Readiness**:
    - Run `npm run build` to ensure there are no TypeScript or Next.js build errors.

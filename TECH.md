@@ -40,7 +40,7 @@ The application addresses institutional needs for academic hierarchy management,
 | **UI Library** | React | `18.3.1` | Component-based UI rendering |
 | **Language** | TypeScript | `^5.6.3` | Type-safe JavaScript superset |
 | **Backend & Database** | Supabase JS Client | `^2.57.4` | Auth, PostgreSQL database, RLS policies |
-| **AI OCR** | `@google/generative-ai` | `^0.24.1` | Gemini 1.5 Flash multimodal vision for code extraction |
+| **AI OCR** | `@google/generative-ai` | `^0.24.1` | Gemini 2.5 Flash multimodal vision for code extraction |
 | **Client OCR** | Tesseract.js | `^6.0.1` | Fallback browser-side Optical Character Recognition |
 | **Spreadsheet Engine** | XLSX (`xlsx`) | `^0.18.5` | Excel workbook parsing & export |
 | **Icons** | Lucide React | `^0.468.0` | UI iconography |
@@ -205,7 +205,7 @@ components/
 
 ## 6. AI OCR Pipeline Implementation
 
-The application features a server-side AI OCR endpoint at [`app/api/ocr/route.ts`](file:///c:/cpp0pw/CODING/Others/Attendance-Portal_TIU/app/api/ocr/route.ts) using Google Gemini 1.5 Flash vision.
+The application features a server-side AI OCR endpoint at [`app/api/ocr/route.ts`](file:///c:/cpp0pw/CODING/Others/Attendance-Portal_TIU/app/api/ocr/route.ts) using Google Gemini 2.5 Flash vision.
 
 ### 6.1 Process Sequence
 
@@ -219,7 +219,7 @@ The application features a server-side AI OCR endpoint at [`app/api/ocr/route.ts
 [Server: Read Image ArrayBuffer & Convert to Base64]
          │
          ▼
-[Server: Invoke GoogleGenerativeAI("gemini-1.5-flash")]
+[Server: Invoke GoogleGenerativeAI("gemini-2.5-flash")]
   Prompt Rules:
    - Identify handwritten/printed 4-digit numbers.
    - Correct OCR character confusions (O->0, I->1, Z->2, S->5, G->6, B->8).
