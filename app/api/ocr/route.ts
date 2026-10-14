@@ -1,43 +1,62 @@
 import { NextRequest, NextResponse } from "next/server";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
-// Use Gemini 2.5 Flash as the primary vision model, with resilient fallbacks
-const PRIMARY_MODEL = process.env.GEMINI_MODEL || "gemini-3.8-flash";
-const FALLBACK_MODELS = [
-  "gemini-flash-latest",
-  "gemini-3.5-flash",
-  "gemini-3.8-flash",
-  "gemini-2.0-flash",
-  "gemini-1.5-flash",
-];
+// ─────────────────────────────────────────────────────────────────────────────
+// Tell Next.js / Netlify this function may run up to 25 s.
+// ─────────────────────────────────────────────────────────────────────────────
+export const maxDuration = 25; // seconds
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Primary: gemini-3.5-flash  |  Fallback: gemini-3.5-flash-lite
+// ─────────────────────────────────────────────────────────────────────────────
+const MODELS_TO_TRY: string[] = (
+  process.env.GEMINI_MODEL ? [process.env.GEMINI_MODEL] : []
+).concat([
+  "gemini-3.5-flash",      // 🥇 primary — latest & most capable
+  "gemini-3.5-flash-lite", // 🥈 fallback — lightweight and current
+  "gemini-2.0-flash",      // 🥉 last resort — stable & reliable
+]);
+
+/** Max ms to wait for one model call before giving up and trying the next. */
+const PER_MODEL_TIMEOUT_MS = 12_000;
+
+/** Wrap a promise so it rejects after `ms` milliseconds. */
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`Timeout after ${ms}ms (${label})`)), ms)
+    ),
+  ]);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 export async function POST(request: NextRequest) {
-  const apiKey = process.env.GEMINI_API_KEY;
+  const primaryKey = process.env.GEMINI_API_KEY;
+  const fallbackKey = process.env.GEMINI_API_KEY_FALLBACK;
 
-  if (!apiKey) {
+  if (!primaryKey) {
     return NextResponse.json(
       { error: "GEMINI_API_KEY is not configured on the server." },
       { status: 500 }
     );
   }
 
+  // Primary key first; if every model fails with it, retry all with fallback key.
+  const apiKeysToTry = fallbackKey ? [primaryKey, fallbackKey] : [primaryKey];
+
   try {
     const formData = await request.formData();
     const imageFile = formData.get("image") as File | null;
 
     if (!imageFile) {
-      return NextResponse.json(
-        { error: "No image file provided." },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "No image file provided." }, { status: 400 });
     }
 
-    // Convert the uploaded file to a base64 string for the Gemini API.
     const arrayBuffer = await imageFile.arrayBuffer();
     const base64Image = Buffer.from(arrayBuffer).toString("base64");
     const mimeType = imageFile.type || "image/jpeg";
-
-    const genAI = new GoogleGenerativeAI(apiKey);
 
     const prompt = `You are an OCR assistant for an academic attendance system.
 Your task is to extract ALL 4-digit numeric codes written on this attendance sheet image.
@@ -56,45 +75,54 @@ If no codes are found, return: {"codes": []}
 
 Do not include any explanation, markdown, or extra text — only valid JSON.`;
 
-    const modelsToTry = [PRIMARY_MODEL, ...FALLBACK_MODELS.filter((m) => m !== PRIMARY_MODEL)];
     let responseText = "";
-    let usedModel = PRIMARY_MODEL;
-    let lastError: any = null;
+    let usedModel = "";
+    let lastError: unknown = null;
 
-    for (const modelCandidate of modelsToTry) {
-      try {
-        const model = genAI.getGenerativeModel({
-          model: modelCandidate,
-          generationConfig: {
-            responseMimeType: "application/json",
-          },
-        });
+    // ── Try every model with each key in turn ──────────────────────────────
+    outer:
+    for (const apiKey of apiKeysToTry) {
+      const genAI = new GoogleGenerativeAI(apiKey);
 
-        const result = await model.generateContent([
-          prompt,
-          {
-            inlineData: {
-              mimeType,
-              data: base64Image,
-            },
-          },
-        ]);
+      for (const modelName of MODELS_TO_TRY) {
+        try {
+          const model = genAI.getGenerativeModel({
+            model: modelName,
+            generationConfig: { responseMimeType: "application/json" },
+          });
 
-        responseText = result.response.text().trim();
-        usedModel = modelCandidate;
-        lastError = null;
-        break; // Successfully generated content
-      } catch (err: any) {
-        lastError = err;
-        console.warn(`Gemini OCR with model ${modelCandidate} failed, trying fallback:`, err?.message || err);
+          const result = await withTimeout(
+            model.generateContent([
+              prompt,
+              { inlineData: { mimeType, data: base64Image } },
+            ]),
+            PER_MODEL_TIMEOUT_MS,
+            modelName
+          );
+
+          responseText = result.response.text().trim();
+          usedModel = modelName;
+          lastError = null;
+          break outer; // ✅ success — stop all loops
+        } catch (err: unknown) {
+          lastError = err;
+          const msg = err instanceof Error ? err.message : String(err);
+          console.warn(
+            `[OCR] model=${modelName} key=…${apiKey.slice(-6)} failed: ${msg}`
+          );
+        }
       }
     }
 
-    if (!responseText && lastError) {
-      throw lastError;
+    if (!responseText) {
+      // All attempts exhausted
+      const msg =
+        lastError instanceof Error ? lastError.message : "All Gemini models failed.";
+      console.error("[OCR] All models/keys exhausted. Last error:", msg);
+      return NextResponse.json({ error: msg }, { status: 502 });
     }
 
-    // Strip markdown code fences if the model wrapped the JSON.
+    // ── Strip markdown fences if the model wrapped the JSON ────────────────
     const jsonText = responseText
       .replace(/^```json\s*/i, "")
       .replace(/^```\s*/i, "")
@@ -105,14 +133,9 @@ Do not include any explanation, markdown, or extra text — only valid JSON.`;
     try {
       parsed = JSON.parse(jsonText);
     } catch {
-      console.error("Gemini response was not valid JSON:", responseText);
+      console.error("[OCR] Response was not valid JSON:", responseText);
       return NextResponse.json(
-        {
-          error: "Gemini returned an unexpected format.",
-          raw: responseText,
-          codes: [],
-          model: usedModel,
-        },
+        { error: "Gemini returned an unexpected format.", raw: responseText, codes: [], model: usedModel },
         { status: 200 }
       );
     }
@@ -123,7 +146,7 @@ Do not include any explanation, markdown, or extra text — only valid JSON.`;
 
     return NextResponse.json({ codes, raw: responseText, model: usedModel });
   } catch (err) {
-    console.error("Gemini OCR error:", err);
+    console.error("[OCR] Unhandled error:", err);
     const message = err instanceof Error ? err.message : "Unknown error";
     return NextResponse.json({ error: message }, { status: 500 });
   }
