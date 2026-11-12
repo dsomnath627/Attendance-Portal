@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useState } from "react";
-import { supabase } from "@/lib/supabase";
+import { isSupabaseConfigured, supabase } from "@/lib/supabase";
 import { LogIn, UserPlus, Loader2, GraduationCap } from "lucide-react";
 import Link from "next/link";
 
@@ -21,6 +21,14 @@ export default function Auth() {
 
     setError("");
     setSuccess("");
+
+    if (!isSupabaseConfigured) {
+      setError(
+        "Supabase is not configured. Add a valid NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY to .env.local and restart the app."
+      );
+      return;
+    }
+
     setLoading(true);
 
     try {
@@ -53,11 +61,14 @@ export default function Auth() {
         }
       }
     } catch (err: any) {
-      setError(
-        err.message === "Failed to fetch"
-          ? "Unable to connect to Supabase. Please ensure your NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY are correctly configured in .env.local."
-          : err.message || "An unexpected authentication error occurred."
-      );
+      const message = err?.message || "An unexpected authentication error occurred.";
+      if (message.includes("Failed to fetch") || message.includes("ERR_NAME_NOT_RESOLVED")) {
+        setError(
+          "Unable to reach your Supabase project. Check that NEXT_PUBLIC_SUPABASE_URL points to your live Supabase project and that your DNS/network can resolve it."
+        );
+      } else {
+        setError(message);
+      }
     } finally {
       setLoading(false);
     }
@@ -178,4 +189,4 @@ export default function Auth() {
       </div>
     </main>
   );
-}
+}

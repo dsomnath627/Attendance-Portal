@@ -1,19 +1,33 @@
 import { createClient } from "@supabase/supabase-js";
 
-const supabaseUrl =
-  process.env.NEXT_PUBLIC_SUPABASE_URL || "https://placeholder.supabase.co";
-const supabaseAnonKey =
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "placeholder-anon-key";
+const supabaseUrl = (process.env.NEXT_PUBLIC_SUPABASE_URL || "").trim();
+const supabaseAnonKey = (process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "").trim();
 
-if (
-  !process.env.NEXT_PUBLIC_SUPABASE_URL ||
-  supabaseUrl.includes("placeholder") ||
-  supabaseUrl.includes("YOUR_PROJECT")
-) {
+const isPlaceholderValue = (value: string) => {
+  if (!value) return true;
+  return (
+    value.includes("placeholder") ||
+    value.includes("YOUR_PROJECT") ||
+    value.includes("YOUR_SUPABASE") ||
+    value.includes("example.supabase.co")
+  );
+};
+
+export const isSupabaseConfigured =
+  !!supabaseUrl &&
+  !!supabaseAnonKey &&
+  !isPlaceholderValue(supabaseUrl) &&
+  !isPlaceholderValue(supabaseAnonKey) &&
+  /^https?:\/\//i.test(supabaseUrl);
+
+if (!isSupabaseConfigured) {
   console.warn(
-    "⚠️ Supabase environment variables are missing or unconfigured. Please create/update your .env.local file with NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY."
+    "⚠️ Supabase environment variables are missing or invalid. Please add a real NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY to .env.local and restart the app."
   );
 }
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
-
+export const supabase = createClient(
+  isSupabaseConfigured ? supabaseUrl : "https://placeholder.supabase.co",
+  isSupabaseConfigured ? supabaseAnonKey : "placeholder-anon-key"
+);
+

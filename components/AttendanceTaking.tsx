@@ -42,7 +42,7 @@ type SavedSession = {
   id: string;
   attendance_date: string;
   created_at: string;
-  source_file_name: string | null;
+  source_file_name?: string | null;
 };
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -211,7 +211,7 @@ export default function AttendanceTaking({
 
       const { data } = await supabase
         .from("attendance_sessions")
-        .select("id, attendance_date, created_at, source_file_name")
+        .select("id, attendance_date, created_at")
         .eq("subject_offering_id", offeringId)
         .eq("attendance_date", date)
         .maybeSingle();
@@ -238,7 +238,7 @@ export default function AttendanceTaking({
     async function loadPastSessions() {
       const { data } = await supabase
         .from("attendance_sessions")
-        .select("id, attendance_date, created_at, source_file_name")
+        .select("id, attendance_date, created_at")
         .eq("subject_offering_id", offeringId)
         .order("attendance_date", { ascending: false });
       setPastSessions(data || []);
@@ -256,7 +256,7 @@ export default function AttendanceTaking({
   async function loadSessionRecordsIntoRows(sessionId: string) {
     const { data: records } = await supabase
       .from("attendance_records")
-      .select("student_id, status, detected_code, updated_at")
+      .select("student_id, status, detected_code, created_at")
       .eq("session_id", sessionId);
 
     if (!records) return;
@@ -280,7 +280,7 @@ export default function AttendanceTaking({
     setViewingSessionId(sessionId);
     const { data } = await supabase
       .from("attendance_records")
-      .select("student_id, status, detected_code, updated_at, students(name, student_id)")
+      .select("student_id, status, detected_code, created_at, students(name, student_id)")
       .eq("session_id", sessionId);
     setSessionRecords(data || []);
   }
@@ -347,35 +347,98 @@ export default function AttendanceTaking({
       return;
     }
 
+    const apiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY;
+    if (!apiKey) {
+      flash("err", "OCR service not configured. NEXT_PUBLIC_GEMINI_API_KEY is missing.");
+      return;
+    }
+
     setOcrProcessing(true);
     setOcrDone(false);
     setDetectedCodes([]);
     setUnmatchedCodes([]);
 
     try {
-      const formData = new FormData();
-      formData.append("image", ocrFile);
+      // ── Call Gemini v1 REST API directly from the browser ────────────────
+      // Using the v1 endpoint (not v1beta) to avoid "model not found" 404s.
+      // Direct fetch bypasses the Netlify serverless function timeout entirely.
+      const arrayBuffer = await ocrFile.arrayBuffer();
+      const base64Image = btoa(
+        new Uint8Array(arrayBuffer).reduce(
+          (data, byte) => data + String.fromCharCode(byte),
+          ""
+        )
+      );
+      const mimeType = ocrFile.type || "image/jpeg";
 
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 30000); // 30s timeout
+      // Models to try in order of speed.
+      const MODELS = [
+        "gemini-3.5-flash-lite",
+        "gemini-3.5-flash",
+        "gemini-2.5-flash",
+      ];
 
-      let response: Response;
-      try {
-        response = await fetch("/api/ocr", {
-          method: "POST",
-          body: formData,
-          signal: controller.signal,
-        });
-      } catch (fetchErr: any) {
-        if (fetchErr?.name === "AbortError") {
-          flash("err", "OCR request timed out. Please try again with a clearer image.");
-        } else {
-          flash("err", "Network error communicating with OCR service.");
+      const prompt = `You are an OCR assistant for an academic attendance system.
+Your task is to extract ALL 4-digit numeric codes written on this attendance sheet image.
+
+Rules:
+- Look for handwritten or printed 4-digit numbers (e.g., 1234, 5678, 0023).
+- These codes represent the last 4 digits of student enrollment IDs.
+- Common OCR confusions to correct: O→0, o→0, I→1, l→1, Z→2, S→5, G→6, B→8.
+- Ignore any 4-digit number that looks like a year (1900–2100).
+- Ignore single isolated letters, names, or non-numeric content.
+
+Return ONLY a JSON object with a single key "codes" containing an array of 4-digit string codes.
+Example: {"codes": ["1234", "5678", "0042"]}
+If no codes are found, return: {"codes": []}
+Do not include any explanation, markdown, or extra text — only valid JSON.`;
+
+      const GEMINI_API = "https://generativelanguage.googleapis.com/v1beta/models";
+      const requestBody = {
+        contents: [{
+          parts: [
+            { text: prompt },
+            { inline_data: { mime_type: mimeType, data: base64Image } },
+          ],
+        }],
+        generationConfig: { response_mime_type: "application/json" },
+      };
+
+      let responseText = "";
+      let usedModel = "";
+      let lastErr: unknown = null;
+
+      for (const modelName of MODELS) {
+        try {
+          const res = await fetch(
+            `${GEMINI_API}/${modelName}:generateContent?key=${apiKey}`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(requestBody),
+            }
+          );
+
+          if (!res.ok) {
+            const errBody = await res.text();
+            console.warn(`Gemini [${modelName}] HTTP ${res.status}:`, errBody.slice(0, 200));
+            lastErr = new Error(`HTTP ${res.status} from ${modelName}`);
+            continue; // try next model
+          }
+
+          const data = await res.json();
+          responseText = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ?? "";
+          if (!responseText) {
+            lastErr = new Error(`Empty response from ${modelName}`);
+            continue;
+          }
+          usedModel = modelName;
+          lastErr = null;
+          break; // ✅ success
+        } catch (e) {
+          lastErr = e;
+          console.warn(`Gemini [${modelName}] fetch error:`, e instanceof Error ? e.message : e);
         }
-        setOcrProcessing(false);
-        return;
-      } finally {
-        clearTimeout(timeout);
       }
 
       // ── Safe JSON parsing ─────────────────────────────────────────────────
@@ -400,21 +463,28 @@ export default function AttendanceTaking({
         return;
       }
 
-      if (!response.ok) {
-        if (response.status === 500 && json.error?.includes("GEMINI_API_KEY")) {
-          flash("err", "OCR service not configured. Ask your administrator to set GEMINI_API_KEY.");
-        } else {
-          flash("err", json.error || "OCR API request failed.");
-        }
-        setOcrProcessing(false);
-        return;
+      console.log(`OCR used model: ${usedModel}`);
+
+      // Strip markdown code fences if the model wrapped the JSON
+      const jsonText = responseText
+        .replace(/^```json\s*/i, "")
+        .replace(/^```\s*/i, "")
+        .replace(/```$/i, "")
+        .trim();
+
+      let parsed: { codes: string[] };
+      try {
+        parsed = JSON.parse(jsonText);
+      } catch {
+        // Fallback: extract codes from raw text via local normalization
+        parsed = { codes: [] };
       }
 
-      const rawText: string = json.raw ?? "";
+      const rawText = responseText;
       setOcrText(rawText);
 
       // Merge API codes with local normalization as fallback
-      const apiCodes: string[] = (json.codes ?? []).filter(
+      const apiCodes: string[] = (parsed.codes ?? []).filter(
         (c: string) => /^\d{4}$/.test(c)
       );
       const localCodes = extractAndNormalizeCodes(rawText);
@@ -493,13 +563,6 @@ export default function AttendanceTaking({
           .delete()
           .eq("session_id", sessionId);
         if (delErr) throw new Error("Failed to clear old records: " + delErr.message);
-
-        await supabase
-          .from("attendance_sessions")
-          .update({
-            source_file_name: ocrFile?.name ?? existingSession.source_file_name,
-          })
-          .eq("id", sessionId);
       } else {
         // Create new session
         const { data: newSession, error: sessErr } = await supabase
@@ -509,8 +572,6 @@ export default function AttendanceTaking({
             attendance_date: date,
             subject_offering_id: offeringId,
             class_id: classId,
-            source_file_name: ocrFile?.name ?? null,
-            created_by: userProfile.id,
           })
           .select("id")
           .single();
@@ -533,8 +594,6 @@ export default function AttendanceTaking({
         student_id: row.student.student_id,
         status: row.status,
         detected_code: row.detectedByOCR && !row.modified ? effectiveCode(row.student) : null,
-        updated_at: new Date().toISOString(),
-        updated_by: userProfile.id,
       }));
 
       const { error: recErr } = await supabase.from("attendance_records").insert(records);
@@ -561,7 +620,7 @@ export default function AttendanceTaking({
       // Refresh past sessions list
       const { data: updated } = await supabase
         .from("attendance_sessions")
-        .select("id, attendance_date, created_at, source_file_name")
+        .select("id, attendance_date, created_at")
         .eq("subject_offering_id", offeringId)
         .order("attendance_date", { ascending: false });
       setPastSessions(updated || []);

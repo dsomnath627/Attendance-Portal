@@ -1,0 +1,18 @@
+# Netlify configuration for Attendance Portal
+# https://docs.netlify.com/configure-builds/file-based-configuration/
+
+[build]
+  command = "npm run build"
+  publish = ".next"
+
+# Raise the function timeout for the OCR route (Gemini vision can be slow).
+# Netlify allows up to 26 s on the free tier and 60 s on paid plans.
+[functions]
+  included_files = []
+
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
+
+# Per-route timeout override for the OCR API — set as high as your plan allows.
+[functions."___netlify-handler"]
+  timeout = 60

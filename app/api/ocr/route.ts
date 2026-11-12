@@ -47,8 +47,9 @@ export async function POST(request: NextRequest) {
   const apiKeysToTry = fallbackKey ? [primaryKey, fallbackKey] : [primaryKey];
 
   try {
-    const formData = await request.formData();
-    const imageFile = formData.get("image") as File | null;
+    const apiKey =
+      process.env.GEMINI_API_KEY ||
+      process.env.NEXT_PUBLIC_GEMINI_API_KEY;
 
     if (!imageFile) {
       return NextResponse.json({ error: "No image file provided." }, { status: 400 });
@@ -140,9 +141,9 @@ Do not include any explanation, markdown, or extra text — only valid JSON.`;
       );
     }
 
-    const codes: string[] = (parsed.codes ?? [])
-      .map((c: string) => String(c).trim())
-      .filter((c: string) => /^\d{4}$/.test(c));
+  const codes: string[] = (parsed.codes ?? [])
+    .map((c: string) => String(c).trim())
+    .filter((c: string) => /^\d{4}$/.test(c));
 
     return NextResponse.json({ codes, raw: responseText, model: usedModel });
   } catch (err) {
