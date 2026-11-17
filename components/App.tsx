@@ -17,6 +17,8 @@ import CoordinatorDashboard from "./CoordinatorDashboard";
 import TeacherDashboard from "./TeacherDashboard";
 import StudentDashboard from "./StudentDashboard";
 import MyProfilePage from "./MyProfilePage";
+import CareerStudentView from "./CareerStudentView";
+import CareerAdminView from "./CareerAdminView";
 
 // OCR is now handled server-side via /api/ocr (Gemini Vision).
 
@@ -25,6 +27,7 @@ import * as XLSX from "xlsx";
 import {
   BarChart3,
   BookOpen,
+  Briefcase,
   CalendarCheck,
   ChevronRight,
   ClipboardList,
@@ -63,6 +66,7 @@ type Tab =
   | "reports"
   | "marks"
   | "admin"
+  | "career"
   | "profile";
 
 type Department = {
@@ -433,6 +437,13 @@ export default function App({
             onClick={() => setTab("profile")}
           />
 
+          <NavButton
+            active={tab === "career"}
+            icon={<Briefcase size={18} />}
+            label="Career & Jobs"
+            onClick={() => setTab("career")}
+          />
+
         </nav>
 
 
@@ -684,6 +695,24 @@ export default function App({
                 userProfile={userProfile}
                 onReload={loadAll}
               />
+            )}
+
+            {tab === "career" && (
+              userProfile.role === "student" ? (
+                <CareerStudentView
+                  userProfile={userProfile}
+                  notify={notify}
+                  showError={showError}
+                />
+              ) : (
+                <CareerAdminView
+                  userProfile={userProfile}
+                  departments={departments}
+                  batches={batches}
+                  notify={notify}
+                  showError={showError}
+                />
+              )
             )}
           </>
 
