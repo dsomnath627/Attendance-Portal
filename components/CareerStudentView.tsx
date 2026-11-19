@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from "react";
 import { supabase } from "@/lib/supabase";
 import type { UserProfile } from "@/app/page";
+import StudentCareerProfile from "./StudentCareerProfile";
 import {
   Briefcase,
   Building,
@@ -32,19 +33,38 @@ export type Opportunity = {
   id: string;
   company_name: string;
   company_logo_url?: string | null;
+  company_website?: string | null;
+  company_description?: string | null;
   title: string;
   type: "internship" | "full_time" | "part_time" | "contract";
   location: string;
   workplace_type: "on_site" | "remote" | "hybrid";
   description: string;
   requirements?: string | null;
+  duration?: string | null;
+  stipend?: string | null;
+  ctc?: string | null;
   salary_range?: string | null;
   deadline: string;
   target_departments?: string[];
   target_batches?: string[];
   min_cgpa?: number;
   min_attendance?: number;
-  status: "draft" | "open" | "closed" | "archived";
+  min_marks_10th?: number | null;
+  min_marks_12th?: number | null;
+  allow_backlogs?: boolean;
+  max_backlogs?: number | null;
+  mandatory_skills?: string[];
+  preferred_skills?: string[];
+  custom_questions?: Array<{
+    id: string;
+    question: string;
+    type: "text" | "long_text" | "yes_no" | "choice";
+    required?: boolean;
+    options?: string[];
+  }>;
+  status: "draft" | "published" | "open" | "closed" | "archived";
+  created_by?: string;
   created_at: string;
 };
 
@@ -68,6 +88,8 @@ export type CareerProfile = {
   phone?: string | null;
   headline?: string | null;
   skills: string[];
+  technical_skills?: string[];
+  soft_skills?: string[];
   resume_url?: string | null;
   linkedin_url?: string | null;
   github_url?: string | null;
@@ -75,6 +97,10 @@ export type CareerProfile = {
   bio_summary?: string | null;
   cgpa: number;
   graduation_year?: number | null;
+  marks_10th?: number | null;
+  marks_12th?: number | null;
+  active_backlogs?: number | null;
+  total_backlogs?: number | null;
 };
 
 interface CareerStudentViewProps {
@@ -115,6 +141,7 @@ export default function CareerStudentView({
   const [applyCoverLetter, setApplyCoverLetter] = useState("");
   const [applyResumeUrl, setApplyResumeUrl] = useState("");
   const [applying, setApplying] = useState(false);
+  const [customAnswers, setCustomAnswers] = useState<Record<string, string>>({});
 
   // Skills input helper
   const [skillInput, setSkillInput] = useState("");
@@ -160,17 +187,17 @@ export default function CareerStudentView({
       if (profData) {
         setCareerProfile({
           ...profData,
-          skills: profData.skills || [],
+          skills: profData.technical_skills?.length ? profData.technical_skills : (profData.skills || []),
           cgpa: profData.cgpa || 8.0,
         });
         setApplyResumeUrl(profData.resume_url || "");
       }
 
-      // 3. Fetch Open Career Opportunities
+      // 3. Fetch Open Career Opportunities (published or open)
       const { data: oppsData, error: oppsError } = await supabase
         .from("career_opportunities")
         .select("*")
-        .in("status", ["open", "closed"])
+        .in("status", ["published", "open", "closed"])
         .order("deadline", { ascending: true });
 
       if (oppsError) {
@@ -357,8 +384,43 @@ export default function CareerStudentView({
       reasons.push("Application deadline has passed");
     }
 
-    // 6. Status Check
-    if (opp.status !== "open") {
+    // 6. 10th Marks Check
+    if (opp.min_marks_10th && opp.min_marks_10th > 0) {
+      const student10th = careerProfile.marks_10th || 0;
+      if (student10th < opp.min_marks_10th) {
+        reasons.push(`10th marks required: ${opp.min_marks_10th}% (Yours: ${student10th}%)`);
+      }
+    }
+
+    // 7. 12th Marks Check
+    if (opp.min_marks_12th && opp.min_marks_12th > 0) {
+      const student12th = careerProfile.marks_12th || 0;
+      if (student12th < opp.min_marks_12th) {
+        reasons.push(`12th marks required: ${opp.min_marks_12th}% (Yours: ${student12th}%)`);
+      }
+    }
+
+    // 8. Backlogs Check
+    const activeBacklogs = careerProfile.active_backlogs || 0;
+    if (opp.allow_backlogs === false && activeBacklogs > 0) {
+      reasons.push(`No active backlogs allowed (You have ${activeBacklogs})`);
+    } else if (opp.max_backlogs !== undefined && opp.max_backlogs !== null && activeBacklogs > opp.max_backlogs) {
+      reasons.push(`Maximum ${opp.max_backlogs} active backlogs allowed (Yours: ${activeBacklogs})`);
+    }
+
+    // 9. Mandatory Skills Check
+    if (opp.mandatory_skills && opp.mandatory_skills.length > 0) {
+      const studentSkills = (careerProfile.skills || []).map((s) => s.toLowerCase().trim());
+      const missing = opp.mandatory_skills.filter(
+        (s) => !studentSkills.includes(s.toLowerCase().trim())
+      );
+      if (missing.length > 0) {
+        reasons.push(`Missing mandatory skill: ${missing.join(", ")}`);
+      }
+    }
+
+    // 10. Status Check
+    if (opp.status !== "open" && opp.status !== "published") {
       reasons.push("Posting is currently closed");
     }
 
@@ -378,6 +440,7 @@ export default function CareerStudentView({
     setSelectedOpp(opp);
     setApplyResumeUrl(careerProfile.resume_url || "");
     setApplyCoverLetter("");
+    setCustomAnswers({});
     setModalOpen(true);
   }
 
@@ -390,6 +453,16 @@ export default function CareerStudentView({
       return;
     }
 
+    // Validate custom questions if any
+    if (selectedOpp.custom_questions && selectedOpp.custom_questions.length > 0) {
+      for (const q of selectedOpp.custom_questions) {
+        if (q.required && (!customAnswers[q.id] || customAnswers[q.id].trim() === "")) {
+          showError(`Please answer required question: "${q.question}"`);
+          return;
+        }
+      }
+    }
+
     setApplying(true);
     try {
       const payload = {
@@ -398,6 +471,7 @@ export default function CareerStudentView({
         student_id: studentRecord?.id || null,
         resume_url: applyResumeUrl,
         cover_letter: applyCoverLetter.trim() || null,
+        custom_answers: customAnswers,
         status: "applied",
         applied_at: new Date().toISOString(),
       };
@@ -802,10 +876,16 @@ export default function CareerStudentView({
                             {opp.location} ({opp.workplace_type.replace("_", "-")})
                           </span>
                         </div>
-                        {opp.salary_range && (
+                        {(opp.ctc || opp.stipend || opp.salary_range) && (
                           <div style={{ display: "flex", alignItems: "center", gap: "4px", color: "#047857", fontWeight: 600 }}>
                             <DollarSign size={14} />
-                            <span>{opp.salary_range}</span>
+                            <span>{opp.ctc ? `CTC: ${opp.ctc}` : opp.stipend ? `Stipend: ${opp.stipend}` : opp.salary_range}</span>
+                          </div>
+                        )}
+                        {opp.duration && (
+                          <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+                            <Clock size={14} />
+                            <span>{opp.duration}</span>
                           </div>
                         )}
                         <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
@@ -819,6 +899,22 @@ export default function CareerStudentView({
                           </span>
                         </div>
                       </div>
+
+                      {/* Mandatory Skills */}
+                      {opp.mandatory_skills && opp.mandatory_skills.length > 0 && (
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: "5px", marginBottom: "12px" }}>
+                          {opp.mandatory_skills.slice(0, 4).map((s, idx) => (
+                            <span key={idx} style={{ fontSize: "11px", padding: "2px 8px", background: "#f1f5f9", borderRadius: "12px", color: "#334155", fontWeight: 600 }}>
+                              {s}
+                            </span>
+                          ))}
+                          {opp.mandatory_skills.length > 4 && (
+                            <span style={{ fontSize: "11px", color: "#94a3b8", alignSelf: "center" }}>
+                              +{opp.mandatory_skills.length - 4} more
+                            </span>
+                          )}
+                        </div>
+                      )}
 
                       {/* Brief Description */}
                       <p
@@ -1167,321 +1263,11 @@ export default function CareerStudentView({
           TAB 3: CAREER PROFILE EDITOR
       ============================================================ */}
       {activeTab === "profile" && (
-        <div className="panel">
-          <div className="panel-header">
-            <div>
-              <h2>Professional Placement Profile</h2>
-              <p>Keep your skills, resume, and credentials updated for university campus drives</p>
-            </div>
-          </div>
-
-          <form onSubmit={saveCareerProfile}>
-            <div className="form-grid" style={{ gridTemplateColumns: "1fr 1fr", gap: "18px" }}>
-              {/* Professional Headline */}
-              <div style={{ gridColumn: "span 2" }}>
-                <label>Professional Headline</label>
-                <input
-                  type="text"
-                  placeholder="e.g. Full Stack Developer | Final Year B.Tech CSE | React & Python"
-                  value={careerProfile.headline || ""}
-                  onChange={(e) =>
-                    setCareerProfile({ ...careerProfile, headline: e.target.value })
-                  }
-                />
-              </div>
-
-              {/* Phone Number */}
-              <div>
-                <label>Contact Phone</label>
-                <input
-                  type="tel"
-                  placeholder="+91 9876543210"
-                  value={careerProfile.phone || ""}
-                  onChange={(e) =>
-                    setCareerProfile({ ...careerProfile, phone: e.target.value })
-                  }
-                />
-              </div>
-
-              {/* CGPA */}
-              <div>
-                <label>Current CGPA (Out of 10.0)</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  max="10"
-                  value={careerProfile.cgpa || 8.0}
-                  onChange={(e) =>
-                    setCareerProfile({
-                      ...careerProfile,
-                      cgpa: parseFloat(e.target.value) || 0,
-                    })
-                  }
-                />
-              </div>
-
-              {/* Expected Graduation Year */}
-              <div>
-                <label>Expected Graduation Year</label>
-                <input
-                  type="number"
-                  placeholder="2026"
-                  value={careerProfile.graduation_year || 2026}
-                  onChange={(e) =>
-                    setCareerProfile({
-                      ...careerProfile,
-                      graduation_year: parseInt(e.target.value) || 2026,
-                    })
-                  }
-                />
-              </div>
-
-              {/* LinkedIn URL */}
-              <div>
-                <label>LinkedIn Profile URL</label>
-                <div style={{ position: "relative" }}>
-                  <Linkedin
-                    size={16}
-                    style={{
-                      position: "absolute",
-                      left: "12px",
-                      top: "50%",
-                      transform: "translateY(-50%)",
-                      color: "#0a66c2",
-                    }}
-                  />
-                  <input
-                    type="url"
-                    placeholder="https://linkedin.com/in/username"
-                    value={careerProfile.linkedin_url || ""}
-                    onChange={(e) =>
-                      setCareerProfile({ ...careerProfile, linkedin_url: e.target.value })
-                    }
-                    style={{ paddingLeft: "36px" }}
-                  />
-                </div>
-              </div>
-
-              {/* GitHub URL */}
-              <div>
-                <label>GitHub Profile URL</label>
-                <div style={{ position: "relative" }}>
-                  <Github
-                    size={16}
-                    style={{
-                      position: "absolute",
-                      left: "12px",
-                      top: "50%",
-                      transform: "translateY(-50%)",
-                      color: "#333",
-                    }}
-                  />
-                  <input
-                    type="url"
-                    placeholder="https://github.com/username"
-                    value={careerProfile.github_url || ""}
-                    onChange={(e) =>
-                      setCareerProfile({ ...careerProfile, github_url: e.target.value })
-                    }
-                    style={{ paddingLeft: "36px" }}
-                  />
-                </div>
-              </div>
-
-              {/* Portfolio URL */}
-              <div>
-                <label>Portfolio / Personal Website</label>
-                <div style={{ position: "relative" }}>
-                  <Globe
-                    size={16}
-                    style={{
-                      position: "absolute",
-                      left: "12px",
-                      top: "50%",
-                      transform: "translateY(-50%)",
-                      color: "#64748b",
-                    }}
-                  />
-                  <input
-                    type="url"
-                    placeholder="https://yourportfolio.dev"
-                    value={careerProfile.portfolio_url || ""}
-                    onChange={(e) =>
-                      setCareerProfile({ ...careerProfile, portfolio_url: e.target.value })
-                    }
-                    style={{ paddingLeft: "36px" }}
-                  />
-                </div>
-              </div>
-
-              {/* Skills Tag Input */}
-              <div style={{ gridColumn: "span 2" }}>
-                <label>Technical & Core Skills</label>
-                <div style={{ display: "flex", gap: "8px", marginBottom: "10px" }}>
-                  <input
-                    type="text"
-                    placeholder="Add a skill (e.g. React, Next.js, Java, SQL, Machine Learning)"
-                    value={skillInput}
-                    onChange={(e) => setSkillInput(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        e.preventDefault();
-                        addSkill();
-                      }
-                    }}
-                  />
-                  <button
-                    type="button"
-                    className="secondary-btn"
-                    onClick={addSkill}
-                    style={{ display: "flex", alignItems: "center", gap: "4px" }}
-                  >
-                    <Plus size={16} /> Add
-                  </button>
-                </div>
-
-                <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
-                  {careerProfile.skills.map((skill) => (
-                    <span
-                      key={skill}
-                      style={{
-                        padding: "5px 12px",
-                        background: "#f1f5f9",
-                        borderRadius: "20px",
-                        fontSize: "13px",
-                        display: "flex",
-                        alignItems: "center",
-                        gap: "6px",
-                        color: "#334155",
-                        fontWeight: 600,
-                        border: "1px solid #e2e8f0",
-                      }}
-                    >
-                      {skill}
-                      <X
-                        size={14}
-                        style={{ cursor: "pointer", color: "#94a3b8" }}
-                        onClick={() => removeSkill(skill)}
-                      />
-                    </span>
-                  ))}
-                  {careerProfile.skills.length === 0 && (
-                    <span style={{ fontSize: "13px", color: "#94a3b8" }}>
-                      No skills added yet. Add relevant technical and domain skills above.
-                    </span>
-                  )}
-                </div>
-              </div>
-
-              {/* Resume File Upload or Link */}
-              <div style={{ gridColumn: "span 2" }}>
-                <label>Resume (PDF / DOCX)</label>
-                <div
-                  style={{
-                    border: "2px dashed #cbd5e1",
-                    borderRadius: "12px",
-                    padding: "20px",
-                    textAlign: "center",
-                    background: "#f8fafc",
-                    marginBottom: "10px",
-                  }}
-                >
-                  <FileText size={36} color="#64748b" style={{ margin: "0 auto 8px" }} />
-                  <div style={{ fontSize: "14px", fontWeight: 600, color: "#334155" }}>
-                    {careerProfile.resume_url ? "Resume Attached" : "Upload Your Latest Resume"}
-                  </div>
-                  <p style={{ fontSize: "12px", color: "#64748b", margin: "4px 0 12px" }}>
-                    Supported formats: PDF, DOC, DOCX up to 10MB
-                  </p>
-
-                  <div style={{ display: "flex", justifyContent: "center", gap: "10px" }}>
-                    <label
-                      htmlFor="resume-upload"
-                      className="primary-btn"
-                      style={{
-                        cursor: "pointer",
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: "6px",
-                        fontSize: "13px",
-                      }}
-                    >
-                      {uploadingResume ? "Uploading..." : "Choose File"}
-                    </label>
-                    <input
-                      id="resume-upload"
-                      type="file"
-                      accept=".pdf,.doc,.docx"
-                      style={{ display: "none" }}
-                      onChange={handleFileUpload}
-                      disabled={uploadingResume}
-                    />
-
-                    {careerProfile.resume_url && (
-                      <a
-                        href={careerProfile.resume_url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="secondary-btn"
-                        style={{
-                          textDecoration: "none",
-                          display: "inline-flex",
-                          alignItems: "center",
-                          gap: "6px",
-                          fontSize: "13px",
-                        }}
-                      >
-                        Preview Resume <ExternalLink size={14} />
-                      </a>
-                    )}
-                  </div>
-                </div>
-
-                {/* Direct Link fallback */}
-                <input
-                  type="url"
-                  placeholder="Or paste external Google Drive / cloud resume link..."
-                  value={careerProfile.resume_url || ""}
-                  onChange={(e) =>
-                    setCareerProfile({ ...careerProfile, resume_url: e.target.value })
-                  }
-                />
-              </div>
-
-              {/* Bio Summary */}
-              <div style={{ gridColumn: "span 2" }}>
-                <label>Executive Bio / Career Objective</label>
-                <textarea
-                  rows={4}
-                  placeholder="Share a brief overview of your projects, achievements, and career interests..."
-                  value={careerProfile.bio_summary || ""}
-                  onChange={(e) =>
-                    setCareerProfile({ ...careerProfile, bio_summary: e.target.value })
-                  }
-                  style={{
-                    width: "100%",
-                    padding: "12px 14px",
-                    borderRadius: "10px",
-                    border: "1px solid #d0d5dd",
-                    fontFamily: "inherit",
-                    fontSize: "14px",
-                  }}
-                />
-              </div>
-            </div>
-
-            <div style={{ marginTop: "24px", display: "flex", justifyContent: "flex-end" }}>
-              <button
-                type="submit"
-                className="primary-btn"
-                style={{ display: "flex", alignItems: "center", gap: "8px", padding: "10px 24px" }}
-              >
-                <CheckCircle size={16} /> Save Career Profile
-              </button>
-            </div>
-          </form>
-        </div>
+        <StudentCareerProfile
+          userProfile={userProfile}
+          notify={notify}
+          showError={showError}
+        />
       )}
 
       {/* ============================================================
@@ -1671,6 +1457,92 @@ export default function CareerStudentView({
                   }}
                 />
               </div>
+
+              {/* Custom Application Questions */}
+              {selectedOpp.custom_questions && selectedOpp.custom_questions.length > 0 && (
+                <div style={{ marginBottom: "20px", padding: "16px", background: "#f8fafc", borderRadius: "12px", border: "1px solid #e2e8f0" }}>
+                  <h4 style={{ margin: "0 0 12px", fontSize: "14px", fontWeight: 700, color: "#1e293b" }}>
+                    Company Screening Questions
+                  </h4>
+                  {selectedOpp.custom_questions.map((q, idx) => (
+                    <div key={q.id || idx} style={{ marginBottom: "14px" }}>
+                      <label style={{ fontSize: "13px", fontWeight: 600, display: "block", marginBottom: "6px", color: "#334155" }}>
+                        {idx + 1}. {q.question} {q.required && <span style={{ color: "#e11d48" }}>*</span>}
+                      </label>
+                      {q.type === "long_text" ? (
+                        <textarea
+                          rows={3}
+                          placeholder="Your answer..."
+                          value={customAnswers[q.id] || ""}
+                          onChange={(e) => setCustomAnswers({ ...customAnswers, [q.id]: e.target.value })}
+                          style={{
+                            width: "100%",
+                            padding: "8px 12px",
+                            borderRadius: "8px",
+                            border: "1px solid #cbd5e1",
+                            fontFamily: "inherit",
+                            fontSize: "13px",
+                          }}
+                        />
+                      ) : q.type === "choice" && q.options && q.options.length > 0 ? (
+                        <select
+                          value={customAnswers[q.id] || ""}
+                          onChange={(e) => setCustomAnswers({ ...customAnswers, [q.id]: e.target.value })}
+                          style={{
+                            width: "100%",
+                            padding: "8px 12px",
+                            borderRadius: "8px",
+                            border: "1px solid #cbd5e1",
+                            fontSize: "13px",
+                          }}
+                        >
+                          <option value="">-- Select an option --</option>
+                          {q.options.map((opt, oIdx) => (
+                            <option key={oIdx} value={opt}>{opt}</option>
+                          ))}
+                        </select>
+                      ) : q.type === "yes_no" ? (
+                        <div style={{ display: "flex", gap: "20px", marginTop: "4px" }}>
+                          <label style={{ display: "flex", alignItems: "center", gap: "6px", cursor: "pointer", fontSize: "13px", fontWeight: 500 }}>
+                            <input
+                              type="radio"
+                              name={`question-${q.id}`}
+                              value="Yes"
+                              checked={customAnswers[q.id] === "Yes"}
+                              onChange={() => setCustomAnswers({ ...customAnswers, [q.id]: "Yes" })}
+                            />
+                            Yes
+                          </label>
+                          <label style={{ display: "flex", alignItems: "center", gap: "6px", cursor: "pointer", fontSize: "13px", fontWeight: 500 }}>
+                            <input
+                              type="radio"
+                              name={`question-${q.id}`}
+                              value="No"
+                              checked={customAnswers[q.id] === "No"}
+                              onChange={() => setCustomAnswers({ ...customAnswers, [q.id]: "No" })}
+                            />
+                            No
+                          </label>
+                        </div>
+                      ) : (
+                        <input
+                          type="text"
+                          placeholder="Your answer..."
+                          value={customAnswers[q.id] || ""}
+                          onChange={(e) => setCustomAnswers({ ...customAnswers, [q.id]: e.target.value })}
+                          style={{
+                            width: "100%",
+                            padding: "8px 12px",
+                            borderRadius: "8px",
+                            border: "1px solid #cbd5e1",
+                            fontSize: "13px",
+                          }}
+                        />
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
 
               {/* Action Buttons */}
               <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px" }}>

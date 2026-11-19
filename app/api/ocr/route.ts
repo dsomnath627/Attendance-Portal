@@ -47,9 +47,8 @@ export async function POST(request: NextRequest) {
   const apiKeysToTry = fallbackKey ? [primaryKey, fallbackKey] : [primaryKey];
 
   try {
-    const apiKey =
-      process.env.GEMINI_API_KEY ||
-      process.env.NEXT_PUBLIC_GEMINI_API_KEY;
+    const formData = await request.formData();
+    const imageFile = formData.get("image") as File | null;
 
     if (!imageFile) {
       return NextResponse.json({ error: "No image file provided." }, { status: 400 });
