@@ -1,9 +1,14 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { supabase } from "@/lib/supabase";
 import type { UserProfile } from "@/app/page";
 import StudentCareerProfile from "./StudentCareerProfile";
+import {
+  evaluateEligibility,
+  type EligibilityResult,
+  type CheckItemResult,
+} from "@/lib/careerEligibility";
 import {
   Briefcase,
   Building,
@@ -27,7 +32,23 @@ import {
   Sparkles,
   Layers,
   Award,
+  Check,
+  CheckSquare,
+  Square,
+  HelpCircle,
+  History,
+  ListFilter,
+  SlidersHorizontal,
+  Eye,
+  RefreshCw,
+  FileCheck,
+  Info,
+  ShieldCheck,
 } from "lucide-react";
+
+/* ============================================================
+   TYPES
+============================================================ */
 
 export type Opportunity = {
   id: string;
@@ -74,11 +95,52 @@ export type Application = {
   student_profile_id: string;
   student_id?: string | null;
   resume_url: string;
+  cv_version_id?: string | null;
   cover_letter?: string | null;
-  status: "applied" | "screening" | "interview" | "offered" | "rejected" | "withdrawn";
+  custom_answers?: Record<string, string>;
+  eligibility_status?: "eligible" | "needs_review" | "not_eligible";
+  eligibility_reasons?: string[];
+  profile_snapshot?: any;
+  current_round?: string;
+  round_scores?: Record<string, number>;
+  withdrawn_at?: string | null;
+  withdrawal_reason?: string | null;
+  status:
+    | "applied"
+    | "screening"
+    | "shortlisted"
+    | "assessment"
+    | "interview"
+    | "waitlisted"
+    | "offered"
+    | "rejected"
+    | "withdrawn";
   feedback?: string | null;
   applied_at: string;
   opportunity?: Opportunity;
+};
+
+export type CvVersion = {
+  id: string;
+  profile_id: string;
+  label: string;
+  file_url: string;
+  file_name?: string | null;
+  is_primary: boolean;
+  uploaded_at: string;
+};
+
+export type ApplicationHistory = {
+  id: string;
+  application_id: string;
+  changed_by?: string | null;
+  changed_by_name?: string | null;
+  from_status?: string | null;
+  to_status: string;
+  round_name?: string | null;
+  score?: number | null;
+  notes?: string | null;
+  created_at: string;
 };
 
 export type CareerProfile = {
@@ -99,8 +161,11 @@ export type CareerProfile = {
   graduation_year?: number | null;
   marks_10th?: number | null;
   marks_12th?: number | null;
+  marks_10th_verified?: boolean | null;
+  marks_12th_verified?: boolean | null;
   active_backlogs?: number | null;
   total_backlogs?: number | null;
+  backlogs_verified?: boolean | null;
 };
 
 interface CareerStudentViewProps {
@@ -120,34 +185,49 @@ export default function CareerStudentView({
   // Student academic data
   const [studentRecord, setStudentRecord] = useState<any | null>(null);
   const [attendancePercentage, setAttendancePercentage] = useState<number>(85);
+  const [officialSgpaRecords, setOfficialSgpaRecords] = useState<any[]>([]);
 
   // Data state
   const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
   const [applications, setApplications] = useState<Application[]>([]);
+  const [cvVersions, setCvVersions] = useState<CvVersion[]>([]);
+  const [appHistoryMap, setAppHistoryMap] = useState<Record<string, ApplicationHistory[]>>({});
+
   const [careerProfile, setCareerProfile] = useState<CareerProfile>({
     profile_id: userProfile.id,
     skills: [],
     cgpa: 8.0,
   });
 
-  // Filters
+  // Discovery Filters
   const [searchQuery, setSearchQuery] = useState("");
   const [filterType, setFilterType] = useState<string>("all");
   const [filterWorkplace, setFilterWorkplace] = useState<string>("all");
+  const [filterEligibility, setFilterEligibility] = useState<string>("all");
 
   // Application Modal state
   const [selectedOpp, setSelectedOpp] = useState<Opportunity | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
-  const [applyCoverLetter, setApplyCoverLetter] = useState("");
+  const [selectedCvId, setSelectedCvId] = useState<string>("");
   const [applyResumeUrl, setApplyResumeUrl] = useState("");
-  const [applying, setApplying] = useState(false);
+  const [applyCoverLetter, setApplyCoverLetter] = useState("");
   const [customAnswers, setCustomAnswers] = useState<Record<string, string>>({});
+  const [applying, setApplying] = useState(false);
 
-  // Skills input helper
-  const [skillInput, setSkillInput] = useState("");
+  // Confirmation Modal state
+  const [confirmModalOpen, setConfirmModalOpen] = useState(false);
+  const [confirmAccuracy, setConfirmAccuracy] = useState(false);
 
-  // Resume file upload
-  const [uploadingResume, setUploadingResume] = useState(false);
+  // Criteria Breakdown Modal state
+  const [breakdownModalOpp, setBreakdownModalOpp] = useState<Opportunity | null>(null);
+
+  // Application Snapshot Modal state
+  const [snapshotModalApp, setSnapshotModalApp] = useState<Application | null>(null);
+
+  // Withdrawal Modal state
+  const [withdrawalModalApp, setWithdrawalModalApp] = useState<Application | null>(null);
+  const [withdrawalReason, setWithdrawalReason] = useState("");
+  const [withdrawing, setWithdrawing] = useState(false);
 
   useEffect(() => {
     loadAllData();
@@ -175,6 +255,17 @@ export default function CareerStudentView({
           const present = attData.filter((r) => r.status === "P").length;
           setAttendancePercentage(Math.round((present / attData.length) * 100));
         }
+
+        // Fetch official SGPA records
+        const { data: sgpaData } = await supabase
+          .from("student_sgpa_records")
+          .select("semester_no, sgpa, cgpa, backlogs")
+          .eq("student_id", sRecord.id)
+          .order("semester_no", { ascending: true });
+
+        if (sgpaData) {
+          setOfficialSgpaRecords(sgpaData);
+        }
       }
 
       // 2. Fetch Career Profile
@@ -187,13 +278,29 @@ export default function CareerStudentView({
       if (profData) {
         setCareerProfile({
           ...profData,
-          skills: profData.technical_skills?.length ? profData.technical_skills : (profData.skills || []),
+          skills: profData.technical_skills?.length ? profData.technical_skills : profData.skills || [],
           cgpa: profData.cgpa || 8.0,
         });
         setApplyResumeUrl(profData.resume_url || "");
       }
 
-      // 3. Fetch Open Career Opportunities (published or open)
+      // 3. Fetch Uploaded CV Versions
+      const { data: cvData } = await supabase
+        .from("career_cv_versions")
+        .select("*")
+        .eq("profile_id", userProfile.id)
+        .order("is_primary", { ascending: false });
+
+      if (cvData) {
+        setCvVersions(cvData);
+        const primary = cvData.find((cv) => cv.is_primary);
+        if (primary) {
+          setSelectedCvId(primary.id);
+          setApplyResumeUrl(primary.file_url);
+        }
+      }
+
+      // 4. Fetch Open Career Opportunities
       const { data: oppsData, error: oppsError } = await supabase
         .from("career_opportunities")
         .select("*")
@@ -206,7 +313,7 @@ export default function CareerStudentView({
         setOpportunities(oppsData as Opportunity[]);
       }
 
-      // 4. Fetch Student's Existing Applications
+      // 5. Fetch Student's Applications
       const { data: appsData, error: appsError } = await supabase
         .from("career_applications")
         .select(`
@@ -215,7 +322,16 @@ export default function CareerStudentView({
           student_profile_id,
           student_id,
           resume_url,
+          cv_version_id,
           cover_letter,
+          custom_answers,
+          eligibility_status,
+          eligibility_reasons,
+          profile_snapshot,
+          current_round,
+          round_scores,
+          withdrawn_at,
+          withdrawal_reason,
           status,
           feedback,
           applied_at,
@@ -232,202 +348,31 @@ export default function CareerStudentView({
           opportunity: a.career_opportunities,
         }));
         setApplications(formatted);
+
+        // 6. Fetch Application History Timeline for all applications
+        const appIds = formatted.map((a: any) => a.id);
+        if (appIds.length > 0) {
+          const { data: histData } = await supabase
+            .from("career_application_history")
+            .select("*")
+            .in("application_id", appIds)
+            .order("created_at", { ascending: true });
+
+          if (histData) {
+            const hMap: Record<string, ApplicationHistory[]> = {};
+            histData.forEach((h: any) => {
+              if (!hMap[h.application_id]) hMap[h.application_id] = [];
+              hMap[h.application_id].push(h);
+            });
+            setAppHistoryMap(hMap);
+          }
+        }
       }
     } catch (err: any) {
       console.error("Error loading career data:", err);
     } finally {
       setLoading(false);
     }
-  }
-
-  // Handle Profile Update
-  async function saveCareerProfile(e: React.FormEvent) {
-    e.preventDefault();
-    try {
-      const payload = {
-        profile_id: userProfile.id,
-        student_id: studentRecord?.id || null,
-        phone: careerProfile.phone || null,
-        headline: careerProfile.headline || null,
-        skills: careerProfile.skills || [],
-        resume_url: careerProfile.resume_url || null,
-        linkedin_url: careerProfile.linkedin_url || null,
-        github_url: careerProfile.github_url || null,
-        portfolio_url: careerProfile.portfolio_url || null,
-        bio_summary: careerProfile.bio_summary || null,
-        cgpa: careerProfile.cgpa || 8.0,
-        graduation_year: careerProfile.graduation_year || 2026,
-        updated_at: new Date().toISOString(),
-      };
-
-      const { error } = await supabase
-        .from("student_career_profiles")
-        .upsert(payload, { onConflict: "profile_id" });
-
-      if (error) throw error;
-      notify("Professional profile updated successfully!");
-    } catch (err: any) {
-      showError(err.message || "Failed to update profile");
-    }
-  }
-
-  // Handle Resume File Upload
-  async function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    if (file.size > 10 * 1024 * 1024) {
-      showError("Resume file size must be less than 10MB");
-      return;
-    }
-
-    try {
-      setUploadingResume(true);
-      const fileExt = file.name.split(".").pop();
-      const filePath = `${userProfile.id}/${Date.now()}_resume.${fileExt}`;
-
-      const { data, error } = await supabase.storage
-        .from("resumes")
-        .upload(filePath, file, { upsert: true });
-
-      if (error) {
-        // Fallback if storage bucket is not configured yet
-        const localBlob = URL.createObjectURL(file);
-        setCareerProfile((prev) => ({ ...prev, resume_url: localBlob }));
-        setApplyResumeUrl(localBlob);
-        notify("Resume attached (local preview). Update your profile to save.");
-        return;
-      }
-
-      const { data: publicUrlData } = supabase.storage
-        .from("resumes")
-        .getPublicUrl(filePath);
-
-      const resumeUrl = publicUrlData?.publicUrl || filePath;
-      setCareerProfile((prev) => ({ ...prev, resume_url: resumeUrl }));
-      setApplyResumeUrl(resumeUrl);
-      notify("Resume uploaded successfully!");
-    } catch (err: any) {
-      showError(err.message || "Resume upload failed");
-    } finally {
-      setUploadingResume(false);
-    }
-  }
-
-  // Add / Remove Skills
-  function addSkill() {
-    const trimmed = skillInput.trim();
-    if (!trimmed) return;
-    if (careerProfile.skills.includes(trimmed)) {
-      setSkillInput("");
-      return;
-    }
-    setCareerProfile((prev) => ({
-      ...prev,
-      skills: [...prev.skills, trimmed],
-    }));
-    setSkillInput("");
-  }
-
-  function removeSkill(skill: string) {
-    setCareerProfile((prev) => ({
-      ...prev,
-      skills: prev.skills.filter((s) => s !== skill),
-    }));
-  }
-
-  // Eligibility Evaluation Engine
-  function checkEligibility(opp: Opportunity): {
-    eligible: boolean;
-    reasons: string[];
-  } {
-    const reasons: string[] = [];
-
-    // 1. Department Check
-    if (
-      opp.target_departments &&
-      opp.target_departments.length > 0 &&
-      studentRecord?.department_id
-    ) {
-      if (!opp.target_departments.includes(studentRecord.department_id)) {
-        reasons.push("Not targeted for your department");
-      }
-    }
-
-    // 2. Batch Check
-    if (
-      opp.target_batches &&
-      opp.target_batches.length > 0 &&
-      studentRecord?.batch_id
-    ) {
-      if (!opp.target_batches.includes(studentRecord.batch_id)) {
-        reasons.push("Not targeted for your graduating batch");
-      }
-    }
-
-    // 3. CGPA Check
-    const minCgpa = opp.min_cgpa || 0;
-    const studentCgpa = careerProfile.cgpa || 0;
-    if (minCgpa > 0 && studentCgpa < minCgpa) {
-      reasons.push(`CGPA required: ${minCgpa} (Yours: ${studentCgpa.toFixed(2)})`);
-    }
-
-    // 4. Attendance Check
-    const minAtt = opp.min_attendance || 0;
-    if (minAtt > 0 && attendancePercentage < minAtt) {
-      reasons.push(`Attendance required: ${minAtt}% (Yours: ${attendancePercentage}%)`);
-    }
-
-    // 5. Expiration / Deadline Check
-    const isExpired = new Date(opp.deadline).getTime() < Date.now();
-    if (isExpired) {
-      reasons.push("Application deadline has passed");
-    }
-
-    // 6. 10th Marks Check
-    if (opp.min_marks_10th && opp.min_marks_10th > 0) {
-      const student10th = careerProfile.marks_10th || 0;
-      if (student10th < opp.min_marks_10th) {
-        reasons.push(`10th marks required: ${opp.min_marks_10th}% (Yours: ${student10th}%)`);
-      }
-    }
-
-    // 7. 12th Marks Check
-    if (opp.min_marks_12th && opp.min_marks_12th > 0) {
-      const student12th = careerProfile.marks_12th || 0;
-      if (student12th < opp.min_marks_12th) {
-        reasons.push(`12th marks required: ${opp.min_marks_12th}% (Yours: ${student12th}%)`);
-      }
-    }
-
-    // 8. Backlogs Check
-    const activeBacklogs = careerProfile.active_backlogs || 0;
-    if (opp.allow_backlogs === false && activeBacklogs > 0) {
-      reasons.push(`No active backlogs allowed (You have ${activeBacklogs})`);
-    } else if (opp.max_backlogs !== undefined && opp.max_backlogs !== null && activeBacklogs > opp.max_backlogs) {
-      reasons.push(`Maximum ${opp.max_backlogs} active backlogs allowed (Yours: ${activeBacklogs})`);
-    }
-
-    // 9. Mandatory Skills Check
-    if (opp.mandatory_skills && opp.mandatory_skills.length > 0) {
-      const studentSkills = (careerProfile.skills || []).map((s) => s.toLowerCase().trim());
-      const missing = opp.mandatory_skills.filter(
-        (s) => !studentSkills.includes(s.toLowerCase().trim())
-      );
-      if (missing.length > 0) {
-        reasons.push(`Missing mandatory skill: ${missing.join(", ")}`);
-      }
-    }
-
-    // 10. Status Check
-    if (opp.status !== "open" && opp.status !== "published") {
-      reasons.push("Posting is currently closed");
-    }
-
-    return {
-      eligible: reasons.length === 0,
-      reasons,
-    };
   }
 
   // Check if student has already applied
@@ -438,18 +383,26 @@ export default function CareerStudentView({
   // Open Application Modal
   function handleOpenApply(opp: Opportunity) {
     setSelectedOpp(opp);
-    setApplyResumeUrl(careerProfile.resume_url || "");
+    const primaryCv = cvVersions.find((cv) => cv.is_primary);
+    if (primaryCv) {
+      setSelectedCvId(primaryCv.id);
+      setApplyResumeUrl(primaryCv.file_url);
+    } else {
+      setSelectedCvId("");
+      setApplyResumeUrl(careerProfile.resume_url || "");
+    }
     setApplyCoverLetter("");
     setCustomAnswers({});
+    setConfirmAccuracy(false);
     setModalOpen(true);
   }
 
-  // Submit Application
-  async function submitApplication() {
+  // Proceed to Application Confirmation Modal
+  function handleReviewApplication() {
     if (!selectedOpp) return;
 
     if (!applyResumeUrl) {
-      showError("Please attach or provide a resume link before applying");
+      showError("Please select an uploaded CV version or provide a resume link");
       return;
     }
 
@@ -463,58 +416,111 @@ export default function CareerStudentView({
       }
     }
 
+    setConfirmAccuracy(false);
+    setConfirmModalOpen(true);
+  }
+
+  // Submit Application via Server-side API with Deterministic Verification
+  async function submitApplicationFinal() {
+    if (!selectedOpp) return;
+    if (!confirmAccuracy) {
+      showError("Please verify and check the confirmation box before submitting.");
+      return;
+    }
+
     setApplying(true);
     try {
-      const payload = {
-        opportunity_id: selectedOpp.id,
-        student_profile_id: userProfile.id,
-        student_id: studentRecord?.id || null,
-        resume_url: applyResumeUrl,
-        cover_letter: applyCoverLetter.trim() || null,
-        custom_answers: customAnswers,
-        status: "applied",
-        applied_at: new Date().toISOString(),
-      };
+      const response = await fetch("/api/career/apply", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          opportunity_id: selectedOpp.id,
+          student_profile_id: userProfile.id,
+          cv_version_id: selectedCvId || null,
+          resume_url: applyResumeUrl,
+          cover_letter: applyCoverLetter.trim() || null,
+          custom_answers: customAnswers,
+        }),
+      });
 
-      const { data, error } = await supabase
-        .from("career_applications")
-        .insert(payload)
-        .select("*, career_opportunities(*)")
-        .single();
+      const resJson = await response.json();
 
-      if (error) throw error;
+      if (!response.ok) {
+        if (resJson.reasons && resJson.reasons.length > 0) {
+          showError(`Eligibility Check Failed: ${resJson.reasons.join(". ")}`);
+        } else {
+          showError(resJson.error || "Failed to submit application");
+        }
+        return;
+      }
 
-      notify(`Application for ${selectedOpp.title} at ${selectedOpp.company_name} submitted!`);
-      setApplications((prev) => [
-        { ...data, opportunity: data.career_opportunities },
-        ...prev,
-      ]);
+      notify(`Application for ${selectedOpp.title} at ${selectedOpp.company_name} submitted successfully!`);
+      setConfirmModalOpen(false);
       setModalOpen(false);
+
+      // Reload applications
+      await loadAllData();
+      setActiveTab("applications");
     } catch (err: any) {
-      showError(err.message || "Failed to submit application");
+      showError(err.message || "Failed to submit application.");
     } finally {
       setApplying(false);
     }
   }
 
-  // Withdraw Application
-  async function withdrawApplication(appId: string) {
-    if (!window.confirm("Are you sure you want to withdraw this application?")) return;
-    try {
-      const { error } = await supabase
-        .from("career_applications")
-        .update({ status: "withdrawn", updated_at: new Date().toISOString() })
-        .eq("id", appId);
+  // Open Withdrawal Prompt Modal
+  function handleOpenWithdraw(app: Application) {
+    setWithdrawalModalApp(app);
+    setWithdrawalReason("");
+  }
 
-      if (error) throw error;
-      notify("Application withdrawn");
-      setApplications((prev) =>
-        prev.map((a) => (a.id === appId ? { ...a, status: "withdrawn" } : a))
-      );
+  // Submit Application Withdrawal via Server-side API
+  async function submitWithdrawal() {
+    if (!withdrawalModalApp) return;
+
+    setWithdrawing(true);
+    try {
+      const response = await fetch("/api/career/withdraw", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          application_id: withdrawalModalApp.id,
+          student_profile_id: userProfile.id,
+          reason: withdrawalReason.trim() || "Withdrawn by candidate",
+        }),
+      });
+
+      const resJson = await response.json();
+      if (!response.ok) {
+        showError(resJson.error || "Failed to withdraw application");
+        return;
+      }
+
+      notify("Application withdrawn successfully.");
+      setWithdrawalModalApp(null);
+      await loadAllData();
     } catch (err: any) {
-      showError(err.message || "Failed to withdraw");
+      showError(err.message || "Failed to withdraw application.");
+    } finally {
+      setWithdrawing(false);
     }
   }
+
+  // Evaluate all opportunities deterministically
+  const oppEvaluations = useMemo(() => {
+    const map = new Map<string, EligibilityResult>();
+    opportunities.forEach((opp) => {
+      const result = evaluateEligibility({
+        opportunity: opp,
+        student: studentRecord,
+        careerProfile,
+        officialSgpaRecords,
+        attendancePercentage,
+      });
+      map.set(opp.id, result);
+    });
+    return map;
+  }, [opportunities, studentRecord, careerProfile, officialSgpaRecords, attendancePercentage]);
 
   // Filtered Opportunities
   const filteredOpportunities = opportunities.filter((opp) => {
@@ -527,7 +533,17 @@ export default function CareerStudentView({
     const matchesWorkplace =
       filterWorkplace === "all" || opp.workplace_type === filterWorkplace;
 
-    return matchesSearch && matchesType && matchesWorkplace;
+    const evaluation = oppEvaluations.get(opp.id);
+    let matchesEligibility = true;
+    if (filterEligibility === "eligible") {
+      matchesEligibility = evaluation?.status === "eligible";
+    } else if (filterEligibility === "needs_review") {
+      matchesEligibility = evaluation?.status === "needs_review";
+    } else if (filterEligibility === "not_eligible") {
+      matchesEligibility = evaluation?.status === "not_eligible";
+    }
+
+    return matchesSearch && matchesType && matchesWorkplace && matchesEligibility;
   });
 
   const activeAppsCount = applications.filter(
@@ -555,7 +571,7 @@ export default function CareerStudentView({
               Career & Placement Hub
             </h1>
             <p style={{ margin: "5px 0 0", color: "#64748b", fontSize: "14px" }}>
-              Explore campus drives, verified internships, and full-time placement opportunities
+              Explore campus drives, verified internships, and placement opportunities
             </p>
           </div>
 
@@ -629,13 +645,24 @@ export default function CareerStudentView({
                 )}
               </div>
               <div style={{ fontSize: "12px", color: "#64748b" }}>
-                Academic Attendance: <strong>{attendancePercentage}%</strong> &bull; CGPA:{" "}
-                <strong>{careerProfile.cgpa ? careerProfile.cgpa.toFixed(2) : "N/A"}</strong>
+                Attendance: <strong>{attendancePercentage}%</strong> &bull; CGPA:{" "}
+                <strong>
+                  {careerProfile.cgpa ? careerProfile.cgpa.toFixed(2) : "N/A"}
+                </strong>{" "}
+                &bull; 10th Marks:{" "}
+                <strong>
+                  {careerProfile.marks_10th != null ? `${careerProfile.marks_10th}%` : "—"}
+                </strong>{" "}
+                {careerProfile.marks_10th_verified && (
+                  <span style={{ color: "#16a34a", fontSize: "11px" }}>[Verified]</span>
+                )}
+                {" "}&bull; Active Backlogs:{" "}
+                <strong>{careerProfile.active_backlogs ?? 0}</strong>
               </div>
             </div>
           </div>
 
-          <div style={{ display: "flex", gap: "10px" }}>
+          <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
             <span
               style={{
                 padding: "4px 10px",
@@ -648,48 +675,58 @@ export default function CareerStudentView({
             >
               {attendancePercentage >= 75 ? "✓ Attendance Criteria Met" : "⚠ Low Attendance (<75%)"}
             </span>
-            <span
-              style={{
-                padding: "4px 10px",
-                borderRadius: "20px",
-                fontSize: "12px",
-                fontWeight: 600,
-                background: careerProfile.resume_url ? "#e0f2fe" : "#fef3c7",
-                color: careerProfile.resume_url ? "#0369a1" : "#92400e",
-              }}
-            >
-              {careerProfile.resume_url ? "✓ Resume Ready" : "⚠ Resume Missing"}
-            </span>
+            {cvVersions.length > 0 && (
+              <span
+                style={{
+                  padding: "4px 10px",
+                  borderRadius: "20px",
+                  fontSize: "12px",
+                  fontWeight: 600,
+                  background: "#eff6ff",
+                  color: "#1d4ed8",
+                }}
+              >
+                📄 {cvVersions.length} CV Version{cvVersions.length > 1 ? "s" : ""} Available
+              </span>
+            )}
           </div>
         </div>
       </div>
 
       {/* ============================================================
-          TAB 1: OPPORTUNITIES (BROWSE & APPLY)
+          TAB 1: BROWSE OPPORTUNITIES
       ============================================================ */}
       {activeTab === "opportunities" && (
         <>
-          {/* Quick Stats Grid */}
+          {/* Quick Metrics */}
           <div className="metrics-grid" style={{ marginBottom: "20px" }}>
             <div className="metric-card">
               <div className="metric-num">{opportunities.length}</div>
               <div className="metric-label">Active Drives</div>
             </div>
             <div className="metric-card">
-              <div className="metric-num">
-                {opportunities.filter((o) => checkEligibility(o).eligible).length}
+              <div className="metric-num" style={{ color: "#16a34a" }}>
+                {
+                  opportunities.filter(
+                    (o) => oppEvaluations.get(o.id)?.status === "eligible"
+                  ).length
+                }
               </div>
-              <div className="metric-label">Eligible For You</div>
+              <div className="metric-label">Fully Eligible</div>
+            </div>
+            <div className="metric-card">
+              <div className="metric-num" style={{ color: "#d97706" }}>
+                {
+                  opportunities.filter(
+                    (o) => oppEvaluations.get(o.id)?.status === "needs_review"
+                  ).length
+                }
+              </div>
+              <div className="metric-label">Needs Review</div>
             </div>
             <div className="metric-card">
               <div className="metric-num">{activeAppsCount}</div>
-              <div className="metric-label">In Review</div>
-            </div>
-            <div className="metric-card">
-              <div className="metric-num">
-                {applications.filter((a) => a.status === "offered").length}
-              </div>
-              <div className="metric-label">Offers Received</div>
+              <div className="metric-label">Applications in Pipeline</div>
             </div>
           </div>
 
@@ -698,7 +735,7 @@ export default function CareerStudentView({
             <div
               style={{
                 display: "grid",
-                gridTemplateColumns: "minmax(200px, 2fr) minmax(140px, 1fr) minmax(140px, 1fr)",
+                gridTemplateColumns: "minmax(200px, 2fr) minmax(130px, 1fr) minmax(130px, 1fr) minmax(140px, 1.2fr)",
                 gap: "12px",
                 alignItems: "center",
               }}
@@ -716,7 +753,7 @@ export default function CareerStudentView({
                 />
                 <input
                   type="text"
-                  placeholder="Search by role, company, or location..."
+                  placeholder="Search by job title, company, or location..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   style={{ paddingLeft: "36px" }}
@@ -729,8 +766,8 @@ export default function CareerStudentView({
               >
                 <option value="all">All Employment Types</option>
                 <option value="internship">Internship</option>
-                <option value="full_time">Full Time</option>
-                <option value="part_time">Part Time</option>
+                <option value="full_time">Full-time</option>
+                <option value="part_time">Part-time</option>
                 <option value="contract">Contract</option>
               </select>
 
@@ -738,26 +775,32 @@ export default function CareerStudentView({
                 value={filterWorkplace}
                 onChange={(e) => setFilterWorkplace(e.target.value)}
               >
-                <option value="all">All Workplace Modes</option>
+                <option value="all">All Work Modes</option>
                 <option value="on_site">On-site</option>
                 <option value="remote">Remote</option>
                 <option value="hybrid">Hybrid</option>
               </select>
+
+              <select
+                value={filterEligibility}
+                onChange={(e) => setFilterEligibility(e.target.value)}
+                style={{ fontWeight: 600, color: "#1e293b" }}
+              >
+                <option value="all">Filter: All Eligibility</option>
+                <option value="eligible">✓ Eligible Only</option>
+                <option value="needs_review">⚠ Needs Review</option>
+                <option value="not_eligible">✕ Ineligible Only</option>
+              </select>
             </div>
           </div>
 
-          {/* Opportunities Cards Grid */}
-          {loading ? (
-            <div className="panel" style={{ textAlign: "center", padding: "40px" }}>
-              <div className="loading-spinner" />
-              <p style={{ marginTop: "12px", color: "#64748b" }}>Loading active opportunities...</p>
-            </div>
-          ) : filteredOpportunities.length === 0 ? (
-            <div className="panel" style={{ textAlign: "center", padding: "50px 20px" }}>
-              <Building size={48} style={{ color: "#cbd5e1", margin: "0 auto 12px" }} />
+          {/* Opportunities Grid */}
+          {filteredOpportunities.length === 0 ? (
+            <div className="panel" style={{ textAlign: "center", padding: "60px 20px" }}>
+              <Briefcase size={44} style={{ color: "#cbd5e1", margin: "0 auto 12px" }} />
               <h3 style={{ margin: "0 0 6px", color: "#334155" }}>No Opportunities Found</h3>
               <p style={{ margin: 0, color: "#64748b", fontSize: "14px" }}>
-                There are currently no active placement drives matching your criteria. Check back soon!
+                Try adjusting your search criteria or eligibility filter to see more active recruitment drives.
               </p>
             </div>
           ) : (
@@ -765,16 +808,33 @@ export default function CareerStudentView({
               style={{
                 display: "grid",
                 gridTemplateColumns: "repeat(auto-fill, minmax(360px, 1fr))",
-                gap: "18px",
+                gap: "20px",
               }}
             >
               {filteredOpportunities.map((opp) => {
-                const eligibility = checkEligibility(opp);
+                const evaluation = oppEvaluations.get(opp.id) || {
+                  status: "eligible" as const,
+                  isEligible: true,
+                  canApply: true,
+                  reasons: [],
+                  reviewReasons: [],
+                  matchedMandatorySkills: [],
+                  missingMandatorySkills: [],
+                  matchedPreferredSkills: [],
+                  missingPreferredSkills: [],
+                  effectiveCgpa: 8.0,
+                  score: 100,
+                  checks: [],
+                };
+
                 const existingApp = getExistingApplication(opp.id);
                 const deadlineDate = new Date(opp.deadline);
                 const daysRemaining = Math.ceil(
                   (deadlineDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24)
                 );
+
+                const isEligible = evaluation.status === "eligible";
+                const isNeedsReview = evaluation.status === "needs_review";
 
                 return (
                   <div
@@ -787,15 +847,17 @@ export default function CareerStudentView({
                       transition: "transform 0.15s ease, box-shadow 0.15s ease",
                       border: existingApp
                         ? "1px solid #bfdbfe"
-                        : eligibility.eligible
-                        ? "1px solid #e2e8f0"
+                        : isEligible
+                        ? "1px solid #bbf7d0"
+                        : isNeedsReview
+                        ? "1px solid #fde68a"
                         : "1px solid #fecaca",
                       position: "relative",
                       margin: 0,
                     }}
                   >
                     <div>
-                      {/* Company Header */}
+                      {/* Header */}
                       <div
                         style={{
                           display: "flex",
@@ -867,7 +929,7 @@ export default function CareerStudentView({
                           gap: "10px",
                           fontSize: "12px",
                           color: "#64748b",
-                          marginBottom: "14px",
+                          marginBottom: "12px",
                         }}
                       >
                         <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
@@ -924,7 +986,7 @@ export default function CareerStudentView({
                           lineHeight: "1.5",
                           margin: "0 0 14px",
                           display: "-webkit-box",
-                          WebkitLineClamp: 3,
+                          WebkitLineClamp: 2,
                           WebkitBoxOrient: "vertical",
                           overflow: "hidden",
                         }}
@@ -932,56 +994,91 @@ export default function CareerStudentView({
                         {opp.description}
                       </p>
 
-                      {/* Eligibility Banner on Card */}
+                      {/* Deterministic Eligibility Indicator */}
                       <div
                         style={{
-                          padding: "8px 12px",
-                          borderRadius: "8px",
+                          padding: "10px 12px",
+                          borderRadius: "10px",
                           fontSize: "12px",
                           display: "flex",
-                          alignItems: "center",
-                          gap: "8px",
+                          flexDirection: "column",
+                          gap: "6px",
                           marginBottom: "14px",
                           background: existingApp
                             ? "#eff6ff"
-                            : eligibility.eligible
+                            : isEligible
                             ? "#f0fdf4"
+                            : isNeedsReview
+                            ? "#fffbeb"
                             : "#fef2f2",
                           color: existingApp
                             ? "#1e40af"
-                            : eligibility.eligible
+                            : isEligible
                             ? "#166534"
+                            : isNeedsReview
+                            ? "#92400e"
                             : "#991b1b",
                           border: `1px solid ${
                             existingApp
                               ? "#bfdbfe"
-                              : eligibility.eligible
+                              : isEligible
                               ? "#bbf7d0"
+                              : isNeedsReview
+                              ? "#fde68a"
                               : "#fecaca"
                           }`,
                         }}
                       >
-                        {existingApp ? (
-                          <>
-                            <CheckCircle size={15} />
-                            <span>
-                              Applied &bull; Status:{" "}
-                              <strong style={{ textTransform: "capitalize" }}>
-                                {existingApp.status}
-                              </strong>
-                            </span>
-                          </>
-                        ) : eligibility.eligible ? (
-                          <>
-                            <CheckCircle size={15} />
-                            <span>Eligible &bull; Meets department, CGPA & attendance criteria</span>
-                          </>
-                        ) : (
-                          <>
-                            <AlertTriangle size={15} />
-                            <span>{eligibility.reasons[0] || "Ineligible for this drive"}</span>
-                          </>
-                        )}
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: "6px", fontWeight: 700 }}>
+                            {existingApp ? (
+                              <>
+                                <CheckCircle size={15} />
+                                <span>Applied ({existingApp.status.toUpperCase()})</span>
+                              </>
+                            ) : isEligible ? (
+                              <>
+                                <CheckCircle size={15} />
+                                <span>Eligible ({evaluation.score}% Match)</span>
+                              </>
+                            ) : isNeedsReview ? (
+                              <>
+                                <AlertTriangle size={15} />
+                                <span>Needs Review ({evaluation.score}% Match)</span>
+                              </>
+                            ) : (
+                              <>
+                                <XCircle size={15} />
+                                <span>Not Eligible</span>
+                              </>
+                            )}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setBreakdownModalOpp(opp)}
+                            style={{
+                              background: "none",
+                              border: "none",
+                              padding: 0,
+                              cursor: "pointer",
+                              fontSize: "11px",
+                              color: "inherit",
+                              fontWeight: 700,
+                              textDecoration: "underline",
+                            }}
+                          >
+                            Criteria Breakdown &rarr;
+                          </button>
+                        </div>
+                        <div style={{ fontSize: "11px", lineHeight: "1.4" }}>
+                          {existingApp
+                            ? `Submitted on ${new Date(existingApp.applied_at).toLocaleDateString()} • Stage: ${existingApp.status}`
+                            : isEligible
+                            ? "Satisfies department, batch, CGPA, marks, and mandatory skill requirements."
+                            : isNeedsReview
+                            ? evaluation.reviewReasons[0] || "Meets baseline criteria but requires coordinator review."
+                            : evaluation.reasons[0] || "Does not satisfy minimum eligibility requirements."}
+                        </div>
                       </div>
                     </div>
 
@@ -1000,7 +1097,7 @@ export default function CareerStudentView({
                         onClick={() => handleOpenApply(opp)}
                         style={{ padding: "8px 14px", fontSize: "13px" }}
                       >
-                        View Details
+                        Details
                       </button>
 
                       {existingApp ? (
@@ -1019,7 +1116,7 @@ export default function CareerStudentView({
                       ) : (
                         <button
                           className="primary-btn"
-                          disabled={!eligibility.eligible}
+                          disabled={!evaluation.canApply}
                           onClick={() => handleOpenApply(opp)}
                           style={{
                             padding: "8px 18px",
@@ -1027,10 +1124,12 @@ export default function CareerStudentView({
                             display: "flex",
                             alignItems: "center",
                             gap: "6px",
+                            opacity: evaluation.canApply ? 1 : 0.6,
+                            cursor: evaluation.canApply ? "pointer" : "not-allowed",
                           }}
                         >
                           <Send size={14} />
-                          Apply Now
+                          {isNeedsReview ? "Apply (Review Req.)" : "Apply Now"}
                         </button>
                       )}
                     </div>
@@ -1043,14 +1142,14 @@ export default function CareerStudentView({
       )}
 
       {/* ============================================================
-          TAB 2: MY APPLICATIONS
+          TAB 2: MY APPLICATIONS & RECRUITMENT TIMELINE
       ============================================================ */}
       {activeTab === "applications" && (
         <div className="panel">
           <div className="panel-header">
             <div>
-              <h2>My Recruitment Pipeline</h2>
-              <p>Track your applications, interview invites, and recruiter decisions in real time</p>
+              <h2>My Recruitment Pipeline & History</h2>
+              <p>Track your applications, round-wise assessment results, and audit timeline in real time</p>
             </div>
           </div>
 
@@ -1059,7 +1158,7 @@ export default function CareerStudentView({
               <FileText size={48} style={{ color: "#cbd5e1", margin: "0 auto 12px" }} />
               <h3 style={{ margin: "0 0 6px", color: "#334155" }}>No Applications Submitted Yet</h3>
               <p style={{ margin: "0 0 16px", color: "#64748b", fontSize: "14px" }}>
-                Browse opportunities and submit your profile to begin tracking your recruitment progress.
+                Browse active opportunities, verify eligibility, and submit your profile.
               </p>
               <button
                 className="primary-btn"
@@ -1069,18 +1168,26 @@ export default function CareerStudentView({
               </button>
             </div>
           ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
               {applications.map((app) => {
                 const opp = app.opportunity;
                 const statusColors: Record<string, { bg: string; text: string; border: string }> = {
                   applied: { bg: "#eff6ff", text: "#1d4ed8", border: "#bfdbfe" },
                   screening: { bg: "#f5f3ff", text: "#6d28d9", border: "#ddd6fe" },
-                  interview: { bg: "#fffbeb", text: "#b45309", border: "#fde68a" },
+                  shortlisted: { bg: "#ecfdf5", text: "#047857", border: "#a7f3d0" },
+                  assessment: { bg: "#fffbeb", text: "#b45309", border: "#fde68a" },
+                  interview: { bg: "#fdf4ff", text: "#a21caf", border: "#f5d0fe" },
+                  waitlisted: { bg: "#fff7ed", text: "#c2410c", border: "#ffedd5" },
                   offered: { bg: "#f0fdf4", text: "#15803d", border: "#bbf7d0" },
                   rejected: { bg: "#fef2f2", text: "#b91c1c", border: "#fecaca" },
                   withdrawn: { bg: "#f8fafc", text: "#64748b", border: "#e2e8f0" },
                 };
                 const config = statusColors[app.status] || statusColors.applied;
+                const historyLogs = appHistoryMap[app.id] || [];
+                const canWithdraw =
+                  app.status === "applied" ||
+                  app.status === "screening" ||
+                  app.status === "shortlisted";
 
                 return (
                   <div
@@ -1088,9 +1195,9 @@ export default function CareerStudentView({
                     style={{
                       border: `1px solid ${config.border}`,
                       borderRadius: "14px",
-                      padding: "20px",
+                      padding: "22px",
                       background: "#ffffff",
-                      boxShadow: "0 2px 4px rgba(0,0,0,0.02)",
+                      boxShadow: "0 2px 6px rgba(0,0,0,0.03)",
                     }}
                   >
                     <div
@@ -1100,12 +1207,12 @@ export default function CareerStudentView({
                         alignItems: "flex-start",
                         flexWrap: "wrap",
                         gap: "12px",
-                        marginBottom: "14px",
+                        marginBottom: "16px",
                       }}
                     >
                       <div>
-                        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                          <h3 style={{ margin: 0, fontSize: "17px", fontWeight: 700 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+                          <h3 style={{ margin: 0, fontSize: "18px", fontWeight: 700 }}>
                             {opp?.title || "Placement Role"}
                           </h3>
                           <span
@@ -1122,43 +1229,84 @@ export default function CareerStudentView({
                           >
                             {app.status}
                           </span>
+                          {app.eligibility_status && (
+                            <span
+                              style={{
+                                padding: "3px 8px",
+                                borderRadius: "8px",
+                                fontSize: "11px",
+                                fontWeight: 700,
+                                background:
+                                  app.eligibility_status === "eligible"
+                                    ? "#dcfce7"
+                                    : app.eligibility_status === "needs_review"
+                                    ? "#fef3c7"
+                                    : "#fee2e2",
+                                color:
+                                  app.eligibility_status === "eligible"
+                                    ? "#166534"
+                                    : app.eligibility_status === "needs_review"
+                                    ? "#92400e"
+                                    : "#991b1b",
+                              }}
+                            >
+                              Verified: {app.eligibility_status.replace("_", " ").toUpperCase()}
+                            </span>
+                          )}
                         </div>
                         <div style={{ fontSize: "14px", color: "#64748b", marginTop: "4px" }}>
                           {opp?.company_name} &bull; Applied on{" "}
                           {new Date(app.applied_at).toLocaleDateString()}
+                          {app.current_round && (
+                            <span style={{ marginLeft: "8px", color: "#0f172a", fontWeight: 600 }}>
+                              &bull; Current Round: {app.current_round}
+                            </span>
+                          )}
                         </div>
                       </div>
 
-                      {app.status === "applied" && (
-                        <button
-                          className="secondary-btn"
-                          onClick={() => withdrawApplication(app.id)}
-                          style={{ fontSize: "12px", padding: "6px 12px", color: "#ef4444" }}
-                        >
-                          Withdraw
-                        </button>
-                      )}
+                      <div style={{ display: "flex", gap: "8px" }}>
+                        {app.profile_snapshot && (
+                          <button
+                            className="secondary-btn"
+                            onClick={() => setSnapshotModalApp(app)}
+                            style={{ fontSize: "12px", padding: "6px 12px", display: "flex", alignItems: "center", gap: "4px" }}
+                          >
+                            <FileCheck size={14} /> View Snapshot
+                          </button>
+                        )}
+                        {canWithdraw && (
+                          <button
+                            className="secondary-btn"
+                            onClick={() => handleOpenWithdraw(app)}
+                            style={{ fontSize: "12px", padding: "6px 12px", color: "#ef4444" }}
+                          >
+                            Withdraw
+                          </button>
+                        )}
+                      </div>
                     </div>
 
                     {/* Progress Pipeline Stepper */}
                     <div
                       style={{
                         display: "grid",
-                        gridTemplateColumns: "repeat(4, 1fr)",
+                        gridTemplateColumns: "repeat(5, 1fr)",
                         gap: "8px",
                         margin: "16px 0",
-                        padding: "12px 14px",
+                        padding: "14px 16px",
                         background: "#f8fafc",
-                        borderRadius: "10px",
+                        borderRadius: "12px",
                       }}
                     >
                       {[
                         { label: "Applied", step: "applied" },
                         { label: "Screening", step: "screening" },
+                        { label: "Assessment", step: "assessment" },
                         { label: "Interview", step: "interview" },
                         { label: "Decision", step: "offered" },
                       ].map((s, idx) => {
-                        const stepOrder = ["applied", "screening", "interview", "offered"];
+                        const stepOrder = ["applied", "screening", "assessment", "interview", "offered"];
                         const currentIdx = stepOrder.indexOf(app.status);
                         const isDone = currentIdx >= idx;
                         const isFailed = app.status === "rejected" && idx === currentIdx;
@@ -1173,8 +1321,8 @@ export default function CareerStudentView({
                           >
                             <div
                               style={{
-                                width: "24px",
-                                height: "24px",
+                                width: "26px",
+                                height: "26px",
                                 borderRadius: "50%",
                                 background: isFailed
                                   ? "#ef4444"
@@ -1206,6 +1354,24 @@ export default function CareerStudentView({
                       })}
                     </div>
 
+                    {/* Withdrawal Notice */}
+                    {app.status === "withdrawn" && (
+                      <div
+                        style={{
+                          padding: "10px 14px",
+                          borderRadius: "8px",
+                          background: "#f1f5f9",
+                          fontSize: "13px",
+                          color: "#64748b",
+                          marginBottom: "12px",
+                        }}
+                      >
+                        <strong>Application Withdrawn:</strong>{" "}
+                        {app.withdrawal_reason || "Withdrawn by candidate"} on{" "}
+                        {app.withdrawn_at ? new Date(app.withdrawn_at).toLocaleDateString() : "—"}
+                      </div>
+                    )}
+
                     {/* Recruiter / Placement Coordinator Feedback */}
                     {app.feedback && (
                       <div
@@ -1216,10 +1382,50 @@ export default function CareerStudentView({
                           border: "1px solid #fef3c7",
                           fontSize: "13px",
                           color: "#92400e",
-                          marginTop: "10px",
+                          marginBottom: "12px",
                         }}
                       >
-                        <strong>Recruiter / Coordinator Note:</strong> {app.feedback}
+                        <strong>Coordinator / Recruiter Note:</strong> {app.feedback}
+                      </div>
+                    )}
+
+                    {/* Audit Trail Timeline Accordion */}
+                    {historyLogs.length > 0 && (
+                      <div style={{ marginTop: "14px", borderTop: "1px solid #f1f5f9", paddingTop: "12px" }}>
+                        <div style={{ fontSize: "12px", fontWeight: 700, color: "#475569", marginBottom: "8px", display: "flex", alignItems: "center", gap: "5px" }}>
+                          <History size={14} /> Recruitment Audit Timeline ({historyLogs.length} events)
+                        </div>
+                        <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                          {historyLogs.map((h) => (
+                            <div
+                              key={h.id}
+                              style={{
+                                fontSize: "12px",
+                                padding: "6px 10px",
+                                background: "#f8fafc",
+                                borderRadius: "6px",
+                                display: "flex",
+                                justifyContent: "space-between",
+                                alignItems: "center",
+                                flexWrap: "wrap",
+                                gap: "8px",
+                              }}
+                            >
+                              <div>
+                                <strong style={{ color: "#1e293b" }}>{h.round_name || h.to_status}</strong>{" "}
+                                &bull; <span style={{ color: "#64748b" }}>{h.notes || `Updated to ${h.to_status}`}</span>
+                                {h.score != null && (
+                                  <span style={{ marginLeft: "6px", color: "#16a34a", fontWeight: 700 }}>
+                                    (Score: {h.score})
+                                  </span>
+                                )}
+                              </div>
+                              <div style={{ fontSize: "11px", color: "#94a3b8" }}>
+                                {new Date(h.created_at).toLocaleString()}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
                       </div>
                     )}
 
@@ -1234,7 +1440,7 @@ export default function CareerStudentView({
                       }}
                     >
                       <FileText size={15} color="#64748b" />
-                      <span style={{ color: "#64748b" }}>Submitted Resume:</span>
+                      <span style={{ color: "#64748b" }}>Submitted CV:</span>
                       <a
                         href={app.resume_url}
                         target="_blank"
@@ -1248,7 +1454,7 @@ export default function CareerStudentView({
                           gap: "4px",
                         }}
                       >
-                        View Attachment <ExternalLink size={13} />
+                        Preview Selected CV <ExternalLink size={13} />
                       </a>
                     </div>
                   </div>
@@ -1260,7 +1466,7 @@ export default function CareerStudentView({
       )}
 
       {/* ============================================================
-          TAB 3: CAREER PROFILE EDITOR
+          TAB 3: FULL STUDENT CAREER PROFILE
       ============================================================ */}
       {activeTab === "profile" && (
         <StudentCareerProfile
@@ -1271,17 +1477,14 @@ export default function CareerStudentView({
       )}
 
       {/* ============================================================
-          APPLICATION MODAL (DETAILS & SUBMIT)
+          APPLICATION SUBMISSION MODAL
       ============================================================ */}
       {modalOpen && selectedOpp && (
         <div
           style={{
             position: "fixed",
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            background: "rgba(0,0,0,0.5)",
+            inset: 0,
+            background: "rgba(0,0,0,0.55)",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -1294,11 +1497,11 @@ export default function CareerStudentView({
               background: "#fff",
               borderRadius: "18px",
               width: "100%",
-              maxWidth: "640px",
+              maxWidth: "680px",
               maxHeight: "90vh",
               overflowY: "auto",
               padding: "28px",
-              boxShadow: "0 20px 25px -5px rgba(0,0,0,0.1)",
+              boxShadow: "0 20px 25px -5px rgba(0,0,0,0.15)",
             }}
           >
             {/* Modal Header */}
@@ -1355,9 +1558,10 @@ export default function CareerStudentView({
                 marginBottom: "20px",
               }}
             >
-              {selectedOpp.salary_range && (
+              {(selectedOpp.ctc || selectedOpp.stipend || selectedOpp.salary_range) && (
                 <div>
-                  <strong>Package:</strong> {selectedOpp.salary_range}
+                  <strong>Package:</strong>{" "}
+                  {selectedOpp.ctc ? `CTC: ${selectedOpp.ctc}` : selectedOpp.stipend ? `Stipend: ${selectedOpp.stipend}` : selectedOpp.salary_range}
                 </div>
               )}
               <div>
@@ -1369,14 +1573,19 @@ export default function CareerStudentView({
                   <strong>Min CGPA:</strong> {selectedOpp.min_cgpa}
                 </div>
               ) : null}
-              {selectedOpp.min_attendance ? (
+              {selectedOpp.min_marks_10th ? (
                 <div>
-                  <strong>Min Attendance:</strong> {selectedOpp.min_attendance}%
+                  <strong>Min 10th:</strong> {selectedOpp.min_marks_10th}%
+                </div>
+              ) : null}
+              {selectedOpp.min_marks_12th ? (
+                <div>
+                  <strong>Min 12th:</strong> {selectedOpp.min_marks_12th}%
                 </div>
               ) : null}
             </div>
 
-            {/* Job Description */}
+            {/* Role Description */}
             <div style={{ marginBottom: "16px" }}>
               <h4 style={{ margin: "0 0 6px", fontSize: "14px", fontWeight: 700 }}>
                 Role Description
@@ -1394,54 +1603,94 @@ export default function CareerStudentView({
               </p>
             </div>
 
-            {/* Job Requirements */}
-            {selectedOpp.requirements && (
-              <div style={{ marginBottom: "20px" }}>
-                <h4 style={{ margin: "0 0 6px", fontSize: "14px", fontWeight: 700 }}>
-                  Key Requirements
-                </h4>
-                <p
-                  style={{
-                    fontSize: "14px",
-                    color: "#475569",
-                    lineHeight: "1.6",
-                    margin: 0,
-                    whiteSpace: "pre-line",
-                  }}
-                >
-                  {selectedOpp.requirements}
-                </p>
-              </div>
-            )}
-
             <hr style={{ border: "0", borderTop: "1px solid #f1f5f9", margin: "20px 0" }} />
 
             {/* Application Form */}
             <div>
-              <h4 style={{ margin: "0 0 12px", fontSize: "15px", fontWeight: 700 }}>
+              <h4 style={{ margin: "0 0 14px", fontSize: "16px", fontWeight: 700 }}>
                 Submit Your Application
               </h4>
 
-              {/* Resume link verification */}
-              <div style={{ marginBottom: "14px" }}>
-                <label>Resume URL to submit *</label>
+              {/* CV Selection (from uploaded career_cv_versions or direct url) */}
+              <div style={{ marginBottom: "18px" }}>
+                <label style={{ fontSize: "13px", fontWeight: 700, display: "block", marginBottom: "8px" }}>
+                  Select CV / Resume Version *
+                </label>
+                {cvVersions.length > 0 ? (
+                  <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginBottom: "10px" }}>
+                    {cvVersions.map((cv) => {
+                      const isSelected = selectedCvId === cv.id || applyResumeUrl === cv.file_url;
+                      return (
+                        <div
+                          key={cv.id}
+                          onClick={() => {
+                            setSelectedCvId(cv.id);
+                            setApplyResumeUrl(cv.file_url);
+                          }}
+                          style={{
+                            padding: "10px 14px",
+                            borderRadius: "10px",
+                            border: `1.5px solid ${isSelected ? "#2563eb" : "#e2e8f0"}`,
+                            background: isSelected ? "#eff6ff" : "#f8fafc",
+                            cursor: "pointer",
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                          }}
+                        >
+                          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                            {isSelected ? <CheckSquare size={16} color="#2563eb" /> : <Square size={16} color="#94a3b8" />}
+                            <div>
+                              <div style={{ fontSize: "13px", fontWeight: 700, color: "#1e293b" }}>
+                                {cv.label}{" "}
+                                {cv.is_primary && (
+                                  <span style={{ fontSize: "11px", color: "#16a34a", background: "#dcfce7", padding: "2px 6px", borderRadius: "4px" }}>
+                                    Primary
+                                  </span>
+                                )}
+                              </div>
+                              <div style={{ fontSize: "11px", color: "#64748b" }}>
+                                Uploaded on {new Date(cv.uploaded_at).toLocaleDateString()}
+                              </div>
+                            </div>
+                          </div>
+                          <a
+                            href={cv.file_url}
+                            target="_blank"
+                            rel="noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            style={{ fontSize: "12px", color: "#2563eb", display: "flex", alignItems: "center", gap: "4px" }}
+                          >
+                            Preview <ExternalLink size={12} />
+                          </a>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div style={{ padding: "10px 14px", background: "#f8fafc", borderRadius: "8px", marginBottom: "10px", fontSize: "12px", color: "#64748b" }}>
+                    No multi-version CVs uploaded yet. You can upload multiple versions in your Career Profile.
+                  </div>
+                )}
+
+                {/* Direct Link Input */}
                 <input
                   type="url"
-                  placeholder="https://... your resume link"
+                  placeholder="Or paste external Google Drive / cloud resume URL..."
                   value={applyResumeUrl}
-                  onChange={(e) => setApplyResumeUrl(e.target.value)}
+                  onChange={(e) => {
+                    setSelectedCvId("");
+                    setApplyResumeUrl(e.target.value);
+                  }}
                   required
                 />
-                {!applyResumeUrl && (
-                  <p style={{ margin: "4px 0 0", color: "#e11d48", fontSize: "12px" }}>
-                    Please provide your resume URL or upload one in your Career Profile.
-                  </p>
-                )}
               </div>
 
               {/* Cover note */}
-              <div style={{ marginBottom: "20px" }}>
-                <label>Optional Note to Recruiter / Cover Letter</label>
+              <div style={{ marginBottom: "18px" }}>
+                <label style={{ fontSize: "13px", fontWeight: 700, display: "block", marginBottom: "6px" }}>
+                  Optional Note to Recruiter / Cover Letter
+                </label>
                 <textarea
                   rows={3}
                   placeholder="Briefly state why you're a great fit for this position..."
@@ -1458,7 +1707,7 @@ export default function CareerStudentView({
                 />
               </div>
 
-              {/* Custom Application Questions */}
+              {/* Custom Screening Questions */}
               {selectedOpp.custom_questions && selectedOpp.custom_questions.length > 0 && (
                 <div style={{ marginBottom: "20px", padding: "16px", background: "#f8fafc", borderRadius: "12px", border: "1px solid #e2e8f0" }}>
                   <h4 style={{ margin: "0 0 12px", fontSize: "14px", fontWeight: 700, color: "#1e293b" }}>
@@ -1556,14 +1805,421 @@ export default function CareerStudentView({
                 <button
                   type="button"
                   className="primary-btn"
-                  disabled={applying || !applyResumeUrl}
-                  onClick={submitApplication}
+                  disabled={!applyResumeUrl}
+                  onClick={handleReviewApplication}
                   style={{ display: "flex", alignItems: "center", gap: "6px" }}
                 >
-                  <Send size={15} />
-                  {applying ? "Submitting..." : "Confirm & Submit Application"}
+                  <span>Review & Confirm Application</span> &rarr;
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================
+          APPLICATION CONFIRMATION MODAL (SNAPSHOT SUMMARY)
+      ============================================================ */}
+      {confirmModalOpen && selectedOpp && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.6)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 1001,
+            padding: "20px",
+          }}
+        >
+          <div
+            style={{
+              background: "#fff",
+              borderRadius: "18px",
+              width: "100%",
+              maxWidth: "600px",
+              maxHeight: "85vh",
+              overflowY: "auto",
+              padding: "26px",
+              boxShadow: "0 25px 50px -12px rgba(0,0,0,0.25)",
+            }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+              <h3 style={{ margin: 0, fontSize: "18px", fontWeight: 800 }}>
+                Confirm Application Submission
+              </h3>
+              <button onClick={() => setConfirmModalOpen(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8" }}>
+                <X size={20} />
+              </button>
+            </div>
+
+            <p style={{ fontSize: "13px", color: "#64748b", margin: "0 0 16px" }}>
+              An immutable snapshot of your academic profile and selected CV will be stored for the recruiter at <strong>{selectedOpp.company_name}</strong>.
+            </p>
+
+            {/* Profile Snapshot Summary */}
+            <div style={{ padding: "14px", background: "#f8fafc", borderRadius: "12px", border: "1px solid #e2e8f0", marginBottom: "16px", fontSize: "13px" }}>
+              <div style={{ fontWeight: 700, marginBottom: "8px", color: "#0f172a" }}>
+                Academic Snapshot Preview
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
+                <div>Student Name: <strong>{studentRecord?.name || userProfile.full_name}</strong></div>
+                <div>Roll No: <strong>{studentRecord?.student_id || "—"}</strong></div>
+                <div>CGPA: <strong>{careerProfile.cgpa ? careerProfile.cgpa.toFixed(2) : "N/A"}</strong></div>
+                <div>Attendance: <strong>{attendancePercentage}%</strong></div>
+                <div>10th Marks: <strong>{careerProfile.marks_10th != null ? `${careerProfile.marks_10th}%` : "—"}</strong></div>
+                <div>12th Marks: <strong>{careerProfile.marks_12th != null ? `${careerProfile.marks_12th}%` : "—"}</strong></div>
+                <div>Active Backlogs: <strong>{careerProfile.active_backlogs ?? 0}</strong></div>
+                <div>Selected CV: <strong style={{ color: "#2563eb" }}>{cvVersions.find((c) => c.id === selectedCvId)?.label || "Custom Link"}</strong></div>
+              </div>
+            </div>
+
+            {/* Screening Answers Summary */}
+            {selectedOpp.custom_questions && selectedOpp.custom_questions.length > 0 && (
+              <div style={{ padding: "14px", background: "#f8fafc", borderRadius: "12px", border: "1px solid #e2e8f0", marginBottom: "16px", fontSize: "13px" }}>
+                <div style={{ fontWeight: 700, marginBottom: "8px", color: "#0f172a" }}>
+                  Screening Question Answers ({Object.keys(customAnswers).length})
+                </div>
+                {selectedOpp.custom_questions.map((q) => (
+                  <div key={q.id} style={{ marginBottom: "6px" }}>
+                    <span style={{ color: "#64748b" }}>{q.question}:</span>{" "}
+                    <strong>{customAnswers[q.id] || "—"}</strong>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Confirmation Checkbox */}
+            <div style={{ marginBottom: "20px" }}>
+              <label style={{ display: "flex", alignItems: "flex-start", gap: "10px", cursor: "pointer", fontSize: "13px", fontWeight: 600, color: "#1e293b" }}>
+                <input
+                  type="checkbox"
+                  checked={confirmAccuracy}
+                  onChange={(e) => setConfirmAccuracy(e.target.checked)}
+                  style={{ marginTop: "3px" }}
+                />
+                <span>I confirm that all submitted academic and professional information is accurate and verified by institutional records.</span>
+              </label>
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px" }}>
+              <button
+                type="button"
+                className="secondary-btn"
+                onClick={() => setConfirmModalOpen(false)}
+              >
+                Back to Edit
+              </button>
+              <button
+                type="button"
+                className="primary-btn"
+                disabled={applying || !confirmAccuracy}
+                onClick={submitApplicationFinal}
+                style={{ display: "flex", alignItems: "center", gap: "6px" }}
+              >
+                <CheckCircle size={15} />
+                {applying ? "Submitting..." : "Confirm & Submit Application"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================
+          CRITERIA BREAKDOWN MODAL
+      ============================================================ */}
+      {breakdownModalOpp && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.55)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 1002,
+            padding: "20px",
+          }}
+        >
+          <div
+            style={{
+              background: "#fff",
+              borderRadius: "18px",
+              width: "100%",
+              maxWidth: "620px",
+              maxHeight: "85vh",
+              overflowY: "auto",
+              padding: "26px",
+              boxShadow: "0 20px 25px -5px rgba(0,0,0,0.15)",
+            }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+              <div>
+                <span style={{ fontSize: "12px", fontWeight: 700, color: "#2563eb", textTransform: "uppercase" }}>
+                  Eligibility Evaluation Breakdown
+                </span>
+                <h3 style={{ margin: "2px 0 0", fontSize: "18px", fontWeight: 800 }}>
+                  {breakdownModalOpp.title} &bull; {breakdownModalOpp.company_name}
+                </h3>
+              </div>
+              <button onClick={() => setBreakdownModalOpp(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8" }}>
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Overall status badge */}
+            {(() => {
+              const evalRes = oppEvaluations.get(breakdownModalOpp.id);
+              if (!evalRes) return null;
+              return (
+                <div
+                  style={{
+                    padding: "12px 16px",
+                    borderRadius: "10px",
+                    marginBottom: "18px",
+                    background:
+                      evalRes.status === "eligible"
+                        ? "#f0fdf4"
+                        : evalRes.status === "needs_review"
+                        ? "#fffbeb"
+                        : "#fef2f2",
+                    color:
+                      evalRes.status === "eligible"
+                        ? "#166534"
+                        : evalRes.status === "needs_review"
+                        ? "#92400e"
+                        : "#991b1b",
+                    border: `1px solid ${
+                      evalRes.status === "eligible"
+                        ? "#bbf7d0"
+                        : evalRes.status === "needs_review"
+                        ? "#fde68a"
+                        : "#fecaca"
+                    }`,
+                    fontWeight: 700,
+                    fontSize: "13px",
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                  }}
+                >
+                  <span>
+                    Status: {evalRes.status.toUpperCase().replace("_", " ")}
+                  </span>
+                  <span>Match Score: {evalRes.score}/100</span>
+                </div>
+              );
+            })()}
+
+            {/* Detailed checks table */}
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
+                <thead>
+                  <tr style={{ background: "#f8fafc", textAlign: "left", color: "#475569" }}>
+                    <th style={{ padding: "8px 12px" }}>Evaluation Criterion</th>
+                    <th style={{ padding: "8px 12px" }}>Status</th>
+                    <th style={{ padding: "8px 12px" }}>Details</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {oppEvaluations.get(breakdownModalOpp.id)?.checks.map((chk, i) => (
+                    <tr key={i} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                      <td style={{ padding: "10px 12px", fontWeight: 600 }}>{chk.name}</td>
+                      <td style={{ padding: "10px 12px" }}>
+                        {chk.passed ? (
+                          chk.needsReview ? (
+                            <span style={{ color: "#d97706", fontWeight: 700, display: "flex", alignItems: "center", gap: "4px" }}>
+                              <AlertTriangle size={14} /> Review
+                            </span>
+                          ) : (
+                            <span style={{ color: "#16a34a", fontWeight: 700, display: "flex", alignItems: "center", gap: "4px" }}>
+                              <CheckCircle size={14} /> Met
+                            </span>
+                          )
+                        ) : (
+                          <span style={{ color: "#dc2626", fontWeight: 700, display: "flex", alignItems: "center", gap: "4px" }}>
+                            <XCircle size={14} /> Not Met
+                          </span>
+                        )}
+                      </td>
+                      <td style={{ padding: "10px 12px", color: "#475569", fontSize: "12px" }}>
+                        {chk.message}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div style={{ marginTop: "20px", display: "flex", justifyContent: "flex-end" }}>
+              <button
+                type="button"
+                className="secondary-btn"
+                onClick={() => setBreakdownModalOpp(null)}
+              >
+                Close Breakdown
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================
+          VIEW APPLICATION SNAPSHOT MODAL
+      ============================================================ */}
+      {snapshotModalApp && snapshotModalApp.profile_snapshot && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.55)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 1002,
+            padding: "20px",
+          }}
+        >
+          <div
+            style={{
+              background: "#fff",
+              borderRadius: "18px",
+              width: "100%",
+              maxWidth: "640px",
+              maxHeight: "85vh",
+              overflowY: "auto",
+              padding: "26px",
+              boxShadow: "0 20px 25px -5px rgba(0,0,0,0.15)",
+            }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+              <div>
+                <span style={{ fontSize: "12px", fontWeight: 700, color: "#2563eb", textTransform: "uppercase" }}>
+                  Application Snapshot
+                </span>
+                <h3 style={{ margin: "2px 0 0", fontSize: "18px", fontWeight: 800 }}>
+                  {snapshotModalApp.opportunity?.title} &bull; {snapshotModalApp.opportunity?.company_name}
+                </h3>
+              </div>
+              <button onClick={() => setSnapshotModalApp(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8" }}>
+                <X size={20} />
+              </button>
+            </div>
+
+            <div style={{ fontSize: "12px", color: "#64748b", marginBottom: "14px" }}>
+              Captured on: {new Date(snapshotModalApp.profile_snapshot.snapshot_timestamp || snapshotModalApp.applied_at).toLocaleString()}
+            </div>
+
+            {/* Academic Snapshot */}
+            <div style={{ padding: "14px", background: "#f8fafc", borderRadius: "10px", border: "1px solid #e2e8f0", marginBottom: "14px", fontSize: "13px" }}>
+              <div style={{ fontWeight: 700, marginBottom: "8px", color: "#0f172a" }}>Academic Record Snapshot</div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px" }}>
+                <div>Effective CGPA: <strong>{snapshotModalApp.profile_snapshot.academic_metrics?.effective_cgpa ?? "—"}</strong></div>
+                <div>Attendance: <strong>{snapshotModalApp.profile_snapshot.academic_metrics?.attendance_percentage}%</strong></div>
+                <div>10th Marks: <strong>{snapshotModalApp.profile_snapshot.academic_metrics?.marks_10th ?? "—"}%</strong></div>
+                <div>12th Marks: <strong>{snapshotModalApp.profile_snapshot.academic_metrics?.marks_12th ?? "—"}%</strong></div>
+                <div>Active Backlogs: <strong>{snapshotModalApp.profile_snapshot.academic_metrics?.active_backlogs ?? 0}</strong></div>
+                <div>CV Used: <strong>{snapshotModalApp.profile_snapshot.submitted_cv?.label || "Resume"}</strong></div>
+              </div>
+            </div>
+
+            {/* Submitted Answers */}
+            {snapshotModalApp.profile_snapshot.custom_answers && Object.keys(snapshotModalApp.profile_snapshot.custom_answers).length > 0 && (
+              <div style={{ padding: "14px", background: "#f8fafc", borderRadius: "10px", border: "1px solid #e2e8f0", marginBottom: "14px", fontSize: "13px" }}>
+                <div style={{ fontWeight: 700, marginBottom: "8px", color: "#0f172a" }}>Submitted Screening Responses</div>
+                {Object.entries(snapshotModalApp.profile_snapshot.custom_answers).map(([qid, ans]) => (
+                  <div key={qid} style={{ marginBottom: "6px" }}>
+                    <span style={{ color: "#64748b" }}>Response:</span> <strong>{String(ans)}</strong>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div style={{ display: "flex", justifyContent: "flex-end" }}>
+              <button
+                type="button"
+                className="secondary-btn"
+                onClick={() => setSnapshotModalApp(null)}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================
+          APPLICATION WITHDRAWAL MODAL
+      ============================================================ */}
+      {withdrawalModalApp && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.55)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 1002,
+            padding: "20px",
+          }}
+        >
+          <div
+            style={{
+              background: "#fff",
+              borderRadius: "18px",
+              width: "100%",
+              maxWidth: "480px",
+              padding: "26px",
+              boxShadow: "0 20px 25px -5px rgba(0,0,0,0.15)",
+            }}
+          >
+            <h3 style={{ margin: "0 0 10px", fontSize: "18px", fontWeight: 700, color: "#b91c1c" }}>
+              Withdraw Application
+            </h3>
+            <p style={{ fontSize: "13px", color: "#475569", margin: "0 0 14px", lineHeight: "1.5" }}>
+              Are you sure you want to withdraw your application for{" "}
+              <strong>{withdrawalModalApp.opportunity?.title}</strong> at{" "}
+              <strong>{withdrawalModalApp.opportunity?.company_name}</strong>?
+            </p>
+
+            <label style={{ fontSize: "12px", fontWeight: 700, display: "block", marginBottom: "6px" }}>
+              Reason for Withdrawal (Optional)
+            </label>
+            <textarea
+              rows={3}
+              placeholder="e.g. Accepted another offer, scheduling conflict, etc."
+              value={withdrawalReason}
+              onChange={(e) => setWithdrawalReason(e.target.value)}
+              style={{
+                width: "100%",
+                padding: "8px 10px",
+                borderRadius: "8px",
+                border: "1px solid #cbd5e1",
+                fontFamily: "inherit",
+                fontSize: "13px",
+                marginBottom: "18px",
+              }}
+            />
+
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px" }}>
+              <button
+                type="button"
+                className="secondary-btn"
+                onClick={() => setWithdrawalModalApp(null)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="primary-btn"
+                disabled={withdrawing}
+                onClick={submitWithdrawal}
+                style={{ background: "#dc2626", borderColor: "#dc2626", color: "#fff" }}
+              >
+                {withdrawing ? "Withdrawing..." : "Confirm Withdrawal"}
+              </button>
             </div>
           </div>
         </div>
@@ -1571,4 +2227,3 @@ export default function CareerStudentView({
     </div>
   );
 }
-

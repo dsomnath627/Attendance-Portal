@@ -41,6 +41,14 @@ import {
   GraduationCap,
   Check,
   ShieldCheck,
+  Award,
+  Layers,
+  History,
+  FileText,
+  Sliders,
+  CheckSquare,
+  Square,
+  ListOrdered,
 } from "lucide-react";
 import type { Opportunity, Application } from "./CareerStudentView";
 
@@ -69,6 +77,7 @@ export type ExtendedOpportunity = Opportunity & {
   mandatory_skills?: string[];
   preferred_skills?: string[];
   custom_questions?: CustomQuestion[];
+  recruitment_rounds?: string[];
   created_by_profile?: { full_name: string; email: string };
 };
 
@@ -108,8 +117,9 @@ type OppFormData = {
   requirements: string;
   /* Status */
   status: OpportunityStatus;
-  /* Custom Questions */
+  /* Custom Questions & Recruitment Pipeline */
   custom_questions: CustomQuestion[];
+  recruitment_rounds: string[];
 };
 
 const DEFAULT_FORM: OppFormData = {
@@ -140,6 +150,7 @@ const DEFAULT_FORM: OppFormData = {
   requirements: "",
   status: "draft",
   custom_questions: [],
+  recruitment_rounds: ["Application Review", "Online Assessment", "Technical Interview", "HR Interview"],
 };
 
 /* ============================================================
@@ -187,6 +198,30 @@ const TYPE_CONFIG: Record<string, { label: string; color: string; bg: string }> 
   full_time:   { label: "Full Time",   color: "#1e40af", bg: "#dbeafe" },
   part_time:   { label: "Part Time",   color: "#6d28d9", bg: "#f3e8ff" },
   contract:    { label: "Contract",    color: "#065f46", bg: "#d1fae5" },
+};
+
+export const STAGE_CONFIG: Record<
+  string,
+  { label: string; color: string; bg: string; border: string }
+> = {
+  applied:     { label: "Applied",     color: "#374151", bg: "#f3f4f6", border: "#d1d5db" },
+  screening:   { label: "Screening",   color: "#6d28d9", bg: "#ede9fe", border: "#c4b5fd" },
+  shortlisted: { label: "Shortlisted", color: "#0369a1", bg: "#e0f2fe", border: "#7dd3fc" },
+  assessment:  { label: "Assessment",  color: "#4338ca", bg: "#e0e7ff", border: "#a5b4fc" },
+  interview:   { label: "Interview",   color: "#b45309", bg: "#fef3c7", border: "#fde68a" },
+  waitlisted:  { label: "Waitlisted",  color: "#c2410c", bg: "#ffedd5", border: "#fed7aa" },
+  offered:     { label: "Offered",     color: "#15803d", bg: "#dcfce7", border: "#86efac" },
+  rejected:    { label: "Rejected",    color: "#b91c1c", bg: "#fee2e2", border: "#fca5a5" },
+  withdrawn:   { label: "Withdrawn",   color: "#64748b", bg: "#f1f5f9", border: "#cbd5e1" },
+};
+
+export const ELIGIBILITY_CONFIG: Record<
+  string,
+  { label: string; color: string; bg: string; border: string }
+> = {
+  eligible:     { label: "Eligible",     color: "#15803d", bg: "#dcfce7", border: "#86efac" },
+  needs_review: { label: "Needs Review", color: "#b45309", bg: "#fef3c7", border: "#fde68a" },
+  not_eligible: { label: "Not Eligible", color: "#b91c1c", bg: "#fee2e2", border: "#fca5a5" },
 };
 
 /* ============================================================
@@ -429,6 +464,162 @@ function CustomQuestionsEditor({
       >
         <Plus size={14} /> Add Application Question
       </button>
+    </div>
+  );
+}
+
+/* ============================================================
+   RECRUITMENT ROUNDS EDITOR
+============================================================ */
+function RecruitmentRoundsEditor({
+  rounds,
+  onChange,
+}: {
+  rounds: string[];
+  onChange: (rounds: string[]) => void;
+}) {
+  const [newRound, setNewRound] = useState("");
+
+  function addRound() {
+    const r = newRound.trim();
+    if (!r || rounds.includes(r)) {
+      setNewRound("");
+      return;
+    }
+    onChange([...rounds, r]);
+    setNewRound("");
+  }
+
+  function removeRound(idx: number) {
+    onChange(rounds.filter((_, i) => i !== idx));
+  }
+
+  function moveRound(idx: number, dir: -1 | 1) {
+    const target = idx + dir;
+    if (target < 0 || target >= rounds.length) return;
+    const copy = [...rounds];
+    const temp = copy[idx];
+    copy[idx] = copy[target];
+    copy[target] = temp;
+    onChange(copy);
+  }
+
+  return (
+    <div>
+      <label style={{ display: "block", marginBottom: "6px", fontWeight: 600, fontSize: "13px", color: "#344054" }}>
+        Recruitment Rounds &amp; Selection Pipeline
+      </label>
+      <p style={{ margin: "0 0 12px", fontSize: "12px", color: "#64748b" }}>
+        Define the interview / evaluation stages. Coordinators can record scores, notes and advance candidates through each round.
+      </p>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginBottom: "12px" }}>
+        {rounds.map((roundName, idx) => (
+          <div
+            key={idx}
+            style={{
+              padding: "10px 14px",
+              borderRadius: "10px",
+              background: "#f8fafc",
+              border: "1px solid #e2e8f0",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: "10px",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+              <div
+                style={{
+                  width: "24px",
+                  height: "24px",
+                  borderRadius: "50%",
+                  background: "#4f46e5",
+                  color: "#fff",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontSize: "12px",
+                  fontWeight: 700,
+                  flexShrink: 0,
+                }}
+              >
+                {idx + 1}
+              </div>
+              <span style={{ fontSize: "13px", fontWeight: 700, color: "#1e293b" }}>{roundName}</span>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+              <button
+                type="button"
+                disabled={idx === 0}
+                onClick={() => moveRound(idx, -1)}
+                style={{
+                  background: "transparent",
+                  border: "1px solid #e2e8f0",
+                  borderRadius: "6px",
+                  cursor: idx === 0 ? "not-allowed" : "pointer",
+                  color: idx === 0 ? "#cbd5e1" : "#475569",
+                  padding: "3px 7px",
+                  fontSize: "11px",
+                  fontWeight: 700,
+                }}
+              >
+                ▲
+              </button>
+              <button
+                type="button"
+                disabled={idx === rounds.length - 1}
+                onClick={() => moveRound(idx, 1)}
+                style={{
+                  background: "transparent",
+                  border: "1px solid #e2e8f0",
+                  borderRadius: "6px",
+                  cursor: idx === rounds.length - 1 ? "not-allowed" : "pointer",
+                  color: idx === rounds.length - 1 ? "#cbd5e1" : "#475569",
+                  padding: "3px 7px",
+                  fontSize: "11px",
+                  fontWeight: 700,
+                }}
+              >
+                ▼
+              </button>
+              <button
+                type="button"
+                onClick={() => removeRound(idx)}
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  cursor: "pointer",
+                  color: "#ef4444",
+                  padding: "4px",
+                }}
+                title="Remove Round"
+              >
+                <Trash2 size={15} />
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ display: "flex", gap: "8px" }}>
+        <input
+          type="text"
+          placeholder="e.g. Coding Assessment, Technical Interview, HR Round"
+          value={newRound}
+          onChange={(e) => setNewRound(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addRound(); } }}
+          style={{ flex: 1, padding: "8px 12px", fontSize: "13px" }}
+        />
+        <button
+          type="button"
+          className="secondary-btn"
+          onClick={addRound}
+          style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "13px" }}
+        >
+          <Plus size={14} /> Add Round
+        </button>
+      </div>
     </div>
   );
 }
@@ -827,11 +1018,29 @@ export default function CareerAdminView({
   /* ATS filters */
   const [atsOppFilter, setAtsOppFilter] = useState("all");
   const [atsStatusFilter, setAtsStatusFilter] = useState("all");
+  const [atsEligibilityFilter, setAtsEligibilityFilter] = useState("all");
+  const [atsDeptFilter, setAtsDeptFilter] = useState("all");
+  const [atsBatchFilter, setAtsBatchFilter] = useState("all");
   const [atsSearch, setAtsSearch] = useState("");
+  const [selectedAppIds, setSelectedAppIds] = useState<string[]>([]);
 
   /* candidate details modal */
   const [candidateApp, setCandidateApp] = useState<any | null>(null);
   const [candidateModalOpen, setCandidateModalOpen] = useState(false);
+  const [candidateModalTab, setCandidateModalTab] = useState<"overview" | "snapshot" | "history">("overview");
+  const [candidateAuditHistory, setCandidateAuditHistory] = useState<any[]>([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+
+  /* round / assessment modal */
+  const [roundModalOpen, setRoundModalOpen] = useState(false);
+  const [activeRoundApp, setActiveRoundApp] = useState<any | null>(null);
+  const [roundForm, setRoundForm] = useState({
+    round_name: "",
+    score: "",
+    to_status: "assessment",
+    notes: "",
+    is_bulk: false,
+  });
 
   /* verification & sgpa */
   const [verificationProfiles, setVerificationProfiles] = useState<any[]>([]);
@@ -1031,13 +1240,43 @@ export default function CareerAdminView({
       .select(`
         id, opportunity_id, student_profile_id, student_id,
         resume_url, cover_letter, status, feedback, applied_at,
-        career_opportunities(id, title, company_name, type),
+        custom_answers, cv_version_id, eligibility_status, eligibility_reasons,
+        profile_snapshot, current_round, round_scores, withdrawn_at, withdrawal_reason,
+        career_opportunities(id, title, company_name, type, recruitment_rounds, custom_questions),
         profiles:student_profile_id(id, full_name, email),
         students:student_id(id, student_id, name, department_id, batch_id)
       `)
       .order("applied_at", { ascending: false });
     if (error) { console.warn("Apps load:", error.message); }
     else if (data) setApplications(data);
+  }
+
+  async function loadAppHistory(appId: string) {
+    setLoadingHistory(true);
+    try {
+      const { data, error } = await supabase
+        .from("career_application_history")
+        .select("*, profiles:changed_by(full_name, email)")
+        .eq("application_id", appId)
+        .order("created_at", { ascending: false });
+      if (!error && data) {
+        setCandidateAuditHistory(data);
+      } else {
+        setCandidateAuditHistory([]);
+      }
+    } catch (e: any) {
+      console.warn("History load error:", e.message);
+      setCandidateAuditHistory([]);
+    } finally {
+      setLoadingHistory(false);
+    }
+  }
+
+  function openCandidateModal(app: any) {
+    setCandidateApp(app);
+    setCandidateModalTab("overview");
+    setCandidateModalOpen(true);
+    loadAppHistory(app.id);
   }
 
   async function refresh() {
@@ -1086,6 +1325,12 @@ export default function CareerAdminView({
       requirements: opp.requirements ?? "",
       status: (opp.status as OpportunityStatus) ?? "draft",
       custom_questions: opp.custom_questions ?? [],
+      recruitment_rounds: opp.recruitment_rounds ?? [
+        "Application Review",
+        "Online Assessment",
+        "Technical Interview",
+        "HR Interview",
+      ],
     });
     setFormSection("company");
     setFormOpen(true);
@@ -1129,6 +1374,9 @@ export default function CareerAdminView({
         requirements: form.requirements.trim() || null,
         status: form.status,
         custom_questions: form.custom_questions,
+        recruitment_rounds: form.recruitment_rounds?.length
+          ? form.recruitment_rounds
+          : ["Application Review", "Online Assessment", "Technical Interview", "HR Interview"],
         updated_at: new Date().toISOString(),
       };
 
@@ -1179,16 +1427,186 @@ export default function CareerAdminView({
     notify(`Status changed to ${STATUS_CONFIG[status].label}`);
   }
 
-  /* ---- ATS ---- */
+  /* ---- ATS (STAGE 6 RECRUITMENT MANAGEMENT) ---- */
 
-  async function updateCandidateStatus(appId: string, status: string) {
-    const { error } = await supabase
+  async function updateCandidateStatus(
+    appId: string,
+    toStatus: string,
+    roundName?: string,
+    score?: number,
+    notes?: string
+  ) {
+    const targetApp = applications.find((a) => a.id === appId);
+    const fromStatus = targetApp?.status || "applied";
+    const now = new Date().toISOString();
+
+    const updatePayload: any = {
+      status: toStatus,
+      updated_at: now,
+    };
+    if (roundName) {
+      updatePayload.current_round = roundName;
+    }
+    if (roundName && score !== undefined && !isNaN(score)) {
+      const existingScores = targetApp?.round_scores || {};
+      updatePayload.round_scores = {
+        ...existingScores,
+        [roundName]: {
+          score: Number(score),
+          notes: notes || null,
+          recorded_at: now,
+          recorded_by: userProfile.id,
+        },
+      };
+    }
+    if (notes) {
+      updatePayload.feedback = notes;
+    }
+
+    const { error: appErr } = await supabase
       .from("career_applications")
-      .update({ status, updated_at: new Date().toISOString() })
+      .update(updatePayload)
       .eq("id", appId);
-    if (error) { showError(error.message); return; }
-    setApplications((prev) => prev.map((a) => (a.id === appId ? { ...a, status } : a)));
-    notify("Stage updated");
+
+    if (appErr) {
+      showError(appErr.message);
+      return;
+    }
+
+    try {
+      await supabase.from("career_application_history").insert({
+        application_id: appId,
+        changed_by: userProfile.id,
+        from_status: fromStatus,
+        to_status: toStatus,
+        round_name: roundName || null,
+        score: score !== undefined && !isNaN(score) ? Number(score) : null,
+        notes: notes || null,
+      });
+    } catch (e: any) {
+      console.warn("Audit history insert error:", e.message);
+    }
+
+    setApplications((prev) =>
+      prev.map((a) => (a.id === appId ? { ...a, ...updatePayload } : a))
+    );
+
+    if (candidateApp && candidateApp.id === appId) {
+      setCandidateApp((prev: any) => ({ ...prev, ...updatePayload }));
+      loadAppHistory(appId);
+    }
+    notify(`Candidate moved to ${STAGE_CONFIG[toStatus]?.label || toStatus}`);
+  }
+
+  async function bulkUpdateStatus(
+    toStatus: string,
+    roundName?: string,
+    score?: number,
+    notes?: string
+  ) {
+    if (selectedAppIds.length === 0) return;
+    const count = selectedAppIds.length;
+    const now = new Date().toISOString();
+
+    try {
+      for (const appId of selectedAppIds) {
+        const targetApp = applications.find((a) => a.id === appId);
+        const fromStatus = targetApp?.status || "applied";
+
+        const updatePayload: any = {
+          status: toStatus,
+          updated_at: now,
+        };
+        if (roundName) updatePayload.current_round = roundName;
+        if (roundName && score !== undefined && !isNaN(score)) {
+          const existingScores = targetApp?.round_scores || {};
+          updatePayload.round_scores = {
+            ...existingScores,
+            [roundName]: {
+              score: Number(score),
+              notes: notes || null,
+              recorded_at: now,
+              recorded_by: userProfile.id,
+            },
+          };
+        }
+        if (notes) updatePayload.feedback = notes;
+
+        await supabase.from("career_applications").update(updatePayload).eq("id", appId);
+
+        try {
+          await supabase.from("career_application_history").insert({
+            application_id: appId,
+            changed_by: userProfile.id,
+            from_status: fromStatus,
+            to_status: toStatus,
+            round_name: roundName || null,
+            score: score !== undefined && !isNaN(score) ? Number(score) : null,
+            notes: notes || null,
+          });
+        } catch (e) {
+          // ignore log fail
+        }
+      }
+
+      setApplications((prev) =>
+        prev.map((a) => {
+          if (!selectedAppIds.includes(a.id)) return a;
+          const upd: any = { status: toStatus, updated_at: now };
+          if (roundName) upd.current_round = roundName;
+          if (notes) upd.feedback = notes;
+          return { ...a, ...upd };
+        })
+      );
+
+      setSelectedAppIds([]);
+      notify(`${count} candidate${count > 1 ? "s" : ""} moved to ${STAGE_CONFIG[toStatus]?.label || toStatus}`);
+    } catch (err: any) {
+      showError(err.message || "Failed to bulk update candidates");
+    }
+  }
+
+  function openRoundModal(app?: any, isBulk = false) {
+    if (isBulk && selectedAppIds.length === 0) {
+      showError("Please select at least one candidate first");
+      return;
+    }
+    const defaultRound =
+      app?.career_opportunities?.recruitment_rounds?.[0] || "Online Assessment";
+    setActiveRoundApp(app || null);
+    setRoundForm({
+      round_name: defaultRound,
+      score: "",
+      to_status: "assessment",
+      notes: "",
+      is_bulk: isBulk,
+    });
+    setRoundModalOpen(true);
+  }
+
+  async function submitRoundResult() {
+    if (!roundForm.round_name.trim()) {
+      showError("Please enter or select a round name");
+      return;
+    }
+    const scoreNum = roundForm.score ? parseFloat(roundForm.score) : undefined;
+    if (roundForm.is_bulk) {
+      await bulkUpdateStatus(
+        roundForm.to_status,
+        roundForm.round_name.trim(),
+        scoreNum,
+        roundForm.notes
+      );
+    } else if (activeRoundApp) {
+      await updateCandidateStatus(
+        activeRoundApp.id,
+        roundForm.to_status,
+        roundForm.round_name.trim(),
+        scoreNum,
+        roundForm.notes
+      );
+    }
+    setRoundModalOpen(false);
   }
 
   async function saveFeedback() {
@@ -1209,25 +1627,41 @@ export default function CareerAdminView({
     const rows = filteredApps.map((app) => {
       const dept = departments.find((d) => d.id === app.students?.department_id);
       const batch = batches.find((b) => b.id === app.students?.batch_id);
+      const snapshot = app.profile_snapshot || {};
+      const academic = snapshot.academic || {};
+      const roundScoresStr = app.round_scores
+        ? Object.entries(app.round_scores)
+            .map(([r, s]: [string, any]) => `${r}: ${s?.score ?? "N/A"}`)
+            .join("; ")
+        : "";
+
       return {
-        "Drive": `${app.career_opportunities?.company_name} — ${app.career_opportunities?.title}`,
+        "Drive": `${app.career_opportunities?.company_name || ""} — ${app.career_opportunities?.title || ""}`,
         "Student Name": app.students?.name || app.profiles?.full_name || "",
         "Roll No": app.students?.student_id || "",
         "Email": app.profiles?.email || "",
-        "Department": dept?.name || "",
-        "Batch": batch?.name || "",
-        "Status": app.status?.toUpperCase() || "",
-        "Applied": new Date(app.applied_at).toLocaleDateString(),
-        "Resume": app.resume_url || "",
-        "Notes": app.feedback || "",
+        "Department": dept?.name || academic.department_name || "",
+        "Batch": batch?.name || academic.batch_name || "",
+        "Eligibility Status": (app.eligibility_status || "N/A").toUpperCase(),
+        "Eligibility Reasons": (app.eligibility_reasons || []).join("; "),
+        "Recruitment Stage": (app.status || "").toUpperCase(),
+        "Current Round": app.current_round || "",
+        "Round Scores": roundScoresStr,
+        "Snapshot CGPA": academic.cgpa ?? "N/A",
+        "Snapshot 10th %": academic.marks_10th ?? "N/A",
+        "Snapshot 12th %": academic.marks_12th ?? "N/A",
+        "Snapshot Backlogs": academic.active_backlogs ?? "N/A",
+        "Applied Date": app.applied_at ? new Date(app.applied_at).toLocaleDateString() : "",
+        "CV URL": app.resume_url || "",
+        "Coordinator Notes": app.feedback || "",
       };
     });
     if (!rows.length) { showError("No data to export"); return; }
     const ws = XLSX.utils.json_to_sheet(rows);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Applicants");
-    XLSX.writeFile(wb, `Candidates_${new Date().toISOString().slice(0, 10)}.xlsx`);
-    notify("Excel exported");
+    XLSX.writeFile(wb, `Recruitment_Report_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    notify("Excel exported with complete candidate metrics");
   }
 
   /* ---- COMPUTED ---- */
@@ -1255,14 +1689,18 @@ export default function CareerAdminView({
   const filteredApps = applications.filter((a) => {
     const opp = atsOppFilter === "all" ? true : a.opportunity_id === atsOppFilter;
     const status = atsStatusFilter === "all" || a.status === atsStatusFilter;
+    const eligibility = atsEligibilityFilter === "all" || a.eligibility_status === atsEligibilityFilter;
+    const dept = atsDeptFilter === "all" || a.students?.department_id === atsDeptFilter;
+    const batch = atsBatchFilter === "all" || a.students?.batch_id === atsBatchFilter;
     const q = atsSearch.toLowerCase();
     const matchQ =
       !q ||
       (a.students?.name || "").toLowerCase().includes(q) ||
       (a.students?.student_id || "").toLowerCase().includes(q) ||
       (a.profiles?.email || "").toLowerCase().includes(q) ||
-      (a.career_opportunities?.company_name || "").toLowerCase().includes(q);
-    return opp && status && matchQ;
+      (a.career_opportunities?.company_name || "").toLowerCase().includes(q) ||
+      (a.career_opportunities?.title || "").toLowerCase().includes(q);
+    return opp && status && eligibility && dept && batch && matchQ;
   });
 
   const statCounts = {
@@ -1541,7 +1979,7 @@ export default function CareerAdminView({
       )}
 
       {/* ══════════════════════════════════════════
-          TAB 2: ATS
+          TAB 2: ATS (STAGE 6 RECRUITMENT MANAGEMENT)
       ══════════════════════════════════════════ */}
       {activeTab === "ats" && (
         <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: "16px", overflow: "hidden" }}>
@@ -1559,22 +1997,159 @@ export default function CareerAdminView({
             }}
           >
             <div>
-              <h2 style={{ margin: "0 0 3px", fontSize: "18px", fontWeight: 700 }}>Applicant Tracking System</h2>
+              <h2 style={{ margin: "0 0 3px", fontSize: "18px", fontWeight: 700 }}>Applicant Tracking &amp; Recruitment</h2>
               <p style={{ margin: 0, fontSize: "13px", color: "#64748b" }}>
-                {filteredApps.length} candidate{filteredApps.length !== 1 ? "s" : ""} shown
+                {filteredApps.length} candidate{filteredApps.length !== 1 ? "s" : ""} matching filters &bull; {applications.length} total applications
               </p>
             </div>
-            <button
-              onClick={exportXlsx}
+            <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
+              <button
+                onClick={exportXlsx}
+                style={{
+                  padding: "9px 18px", borderRadius: "9px", border: "1px solid #d1d5db",
+                  background: "#fff", cursor: "pointer", display: "flex", alignItems: "center",
+                  gap: "6px", fontSize: "13px", fontWeight: 600, color: "#374151",
+                }}
+              >
+                <FileSpreadsheet size={15} style={{ color: "#16a34a" }} /> Export Excel
+              </button>
+            </div>
+          </div>
+
+          {/* Bulk Selection Toolbar */}
+          {selectedAppIds.length > 0 && (
+            <div
               style={{
-                padding: "9px 18px", borderRadius: "9px", border: "1px solid #d1d5db",
-                background: "#fff", cursor: "pointer", display: "flex", alignItems: "center",
-                gap: "6px", fontSize: "13px", fontWeight: 600, color: "#374151",
+                padding: "12px 24px",
+                background: "#eff6ff",
+                borderBottom: "1px solid #bfdbfe",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                flexWrap: "wrap",
+                gap: "10px",
               }}
             >
-              <FileSpreadsheet size={15} style={{ color: "#16a34a" }} /> Export Excel
-            </button>
-          </div>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                <span style={{ fontSize: "13px", fontWeight: 700, color: "#1e40af" }}>
+                  {selectedAppIds.length} candidate{selectedAppIds.length > 1 ? "s" : ""} selected
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setSelectedAppIds([])}
+                  style={{
+                    background: "transparent",
+                    border: "none",
+                    color: "#64748b",
+                    fontSize: "12px",
+                    cursor: "pointer",
+                    textDecoration: "underline",
+                  }}
+                >
+                  Clear Selection
+                </button>
+              </div>
+
+              <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", alignItems: "center" }}>
+                <button
+                  type="button"
+                  onClick={() => bulkUpdateStatus("shortlisted")}
+                  style={{
+                    padding: "6px 12px",
+                    borderRadius: "7px",
+                    border: "1px solid #7dd3fc",
+                    background: "#e0f2fe",
+                    color: "#0369a1",
+                    fontSize: "12px",
+                    fontWeight: 700,
+                    cursor: "pointer",
+                  }}
+                >
+                  Shortlist
+                </button>
+                <button
+                  type="button"
+                  onClick={() => openRoundModal(undefined, true)}
+                  style={{
+                    padding: "6px 12px",
+                    borderRadius: "7px",
+                    border: "1px solid #a5b4fc",
+                    background: "#e0e7ff",
+                    color: "#4338ca",
+                    fontSize: "12px",
+                    fontWeight: 700,
+                    cursor: "pointer",
+                  }}
+                >
+                  Record Assessment / Round
+                </button>
+                <button
+                  type="button"
+                  onClick={() => bulkUpdateStatus("interview")}
+                  style={{
+                    padding: "6px 12px",
+                    borderRadius: "7px",
+                    border: "1px solid #fde68a",
+                    background: "#fef3c7",
+                    color: "#b45309",
+                    fontSize: "12px",
+                    fontWeight: 700,
+                    cursor: "pointer",
+                  }}
+                >
+                  Move to Interview
+                </button>
+                <button
+                  type="button"
+                  onClick={() => bulkUpdateStatus("waitlisted")}
+                  style={{
+                    padding: "6px 12px",
+                    borderRadius: "7px",
+                    border: "1px solid #fed7aa",
+                    background: "#ffedd5",
+                    color: "#c2410c",
+                    fontSize: "12px",
+                    fontWeight: 700,
+                    cursor: "pointer",
+                  }}
+                >
+                  Waitlist
+                </button>
+                <button
+                  type="button"
+                  onClick={() => bulkUpdateStatus("offered")}
+                  style={{
+                    padding: "6px 12px",
+                    borderRadius: "7px",
+                    border: "1px solid #86efac",
+                    background: "#dcfce7",
+                    color: "#15803d",
+                    fontSize: "12px",
+                    fontWeight: 700,
+                    cursor: "pointer",
+                  }}
+                >
+                  Offer
+                </button>
+                <button
+                  type="button"
+                  onClick={() => bulkUpdateStatus("rejected")}
+                  style={{
+                    padding: "6px 12px",
+                    borderRadius: "7px",
+                    border: "1px solid #fca5a5",
+                    background: "#fee2e2",
+                    color: "#b91c1c",
+                    fontSize: "12px",
+                    fontWeight: 700,
+                    cursor: "pointer",
+                  }}
+                >
+                  Reject
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* ATS Filter Bar */}
           <div
@@ -1582,36 +2157,91 @@ export default function CareerAdminView({
               padding: "14px 24px",
               borderBottom: "1px solid #f1f5f9",
               display: "flex",
-              gap: "12px",
+              gap: "10px",
               flexWrap: "wrap",
               alignItems: "center",
+              background: "#fff",
             }}
           >
+            {/* Search */}
             <div style={{ position: "relative", flex: "1 1 200px" }}>
               <Search size={14} style={{ position: "absolute", left: "11px", top: "50%", transform: "translateY(-50%)", color: "#94a3b8" }} />
               <input
                 type="text"
-                placeholder="Search candidate name, roll no, email…"
+                placeholder="Search candidate name, roll no, email..."
                 value={atsSearch}
                 onChange={(e) => setAtsSearch(e.target.value)}
-                style={{ paddingLeft: "34px" }}
+                style={{ paddingLeft: "34px", width: "100%", fontSize: "13px" }}
               />
             </div>
-            <select value={atsOppFilter} onChange={(e) => setAtsOppFilter(e.target.value)} style={{ flex: "0 1 220px" }}>
+
+            {/* Opportunity filter */}
+            <select value={atsOppFilter} onChange={(e) => setAtsOppFilter(e.target.value)} style={{ flex: "0 1 200px", fontSize: "13px" }}>
               <option value="all">All Drives</option>
               {visibleOpps.map((o) => (
                 <option key={o.id} value={o.id}>{o.company_name} — {o.title}</option>
               ))}
             </select>
-            <select value={atsStatusFilter} onChange={(e) => setAtsStatusFilter(e.target.value)} style={{ flex: "0 1 160px" }}>
+
+            {/* Status filter */}
+            <select value={atsStatusFilter} onChange={(e) => setAtsStatusFilter(e.target.value)} style={{ flex: "0 1 140px", fontSize: "13px" }}>
               <option value="all">All Stages</option>
-              <option value="applied">Applied</option>
-              <option value="screening">Screening</option>
-              <option value="interview">Interview</option>
-              <option value="offered">Offered</option>
-              <option value="rejected">Rejected</option>
-              <option value="withdrawn">Withdrawn</option>
+              {Object.keys(STAGE_CONFIG).map((st) => (
+                <option key={st} value={st}>{STAGE_CONFIG[st].label}</option>
+              ))}
             </select>
+
+            {/* Eligibility filter */}
+            <select value={atsEligibilityFilter} onChange={(e) => setAtsEligibilityFilter(e.target.value)} style={{ flex: "0 1 140px", fontSize: "13px" }}>
+              <option value="all">All Eligibility</option>
+              <option value="eligible">Eligible Only</option>
+              <option value="needs_review">Needs Review</option>
+              <option value="not_eligible">Not Eligible</option>
+            </select>
+
+            {/* Department filter */}
+            <select value={atsDeptFilter} onChange={(e) => setAtsDeptFilter(e.target.value)} style={{ flex: "0 1 150px", fontSize: "13px" }}>
+              <option value="all">All Departments</option>
+              {departments
+                .filter((d) => (!isCoordinator || myDeptIds.length === 0 || myDeptIds.includes(d.id)))
+                .map((d) => (
+                  <option key={d.id} value={d.id}>{d.name}</option>
+                ))}
+            </select>
+
+            {/* Batch filter */}
+            <select value={atsBatchFilter} onChange={(e) => setAtsBatchFilter(e.target.value)} style={{ flex: "0 1 140px", fontSize: "13px" }}>
+              <option value="all">All Batches</option>
+              {batches.map((b) => (
+                <option key={b.id} value={b.id}>{b.name}</option>
+              ))}
+            </select>
+
+            {/* Reset */}
+            {(atsSearch || atsOppFilter !== "all" || atsStatusFilter !== "all" || atsEligibilityFilter !== "all" || atsDeptFilter !== "all" || atsBatchFilter !== "all") && (
+              <button
+                type="button"
+                onClick={() => {
+                  setAtsSearch("");
+                  setAtsOppFilter("all");
+                  setAtsStatusFilter("all");
+                  setAtsEligibilityFilter("all");
+                  setAtsDeptFilter("all");
+                  setAtsBatchFilter("all");
+                }}
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  color: "#ef4444",
+                  fontSize: "12px",
+                  cursor: "pointer",
+                  fontWeight: 600,
+                  padding: "6px 8px",
+                }}
+              >
+                Reset
+              </button>
+            )}
           </div>
 
           {/* ATS Table */}
@@ -1625,11 +2255,28 @@ export default function CareerAdminView({
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
                 <thead>
                   <tr style={{ background: "#f8fafc" }}>
-                    {["Candidate", "Drive & Role", "Department / Batch", "Applied", "Resume", "Stage", "Notes"].map((h) => (
+                    <th style={{ padding: "10px 14px", width: "40px", borderBottom: "1px solid #e2e8f0" }}>
+                      <input
+                        type="checkbox"
+                        checked={
+                          filteredApps.length > 0 &&
+                          filteredApps.every((a) => selectedAppIds.includes(a.id))
+                        }
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setSelectedAppIds(filteredApps.map((a) => a.id));
+                          } else {
+                            setSelectedAppIds([]);
+                          }
+                        }}
+                        style={{ cursor: "pointer" }}
+                      />
+                    </th>
+                    {["Candidate", "Drive & Role", "Department / Batch", "Eligibility", "Current Round / Score", "Stage", "Actions"].map((h) => (
                       <th
                         key={h}
                         style={{
-                          padding: "10px 16px", textAlign: "left", fontWeight: 700,
+                          padding: "10px 14px", textAlign: "left", fontWeight: 700,
                           fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.05em",
                           color: "#64748b", borderBottom: "1px solid #e2e8f0", whiteSpace: "nowrap",
                         }}
@@ -1643,12 +2290,38 @@ export default function CareerAdminView({
                   {filteredApps.map((app, i) => {
                     const dept = departments.find((d) => d.id === app.students?.department_id);
                     const batch = batches.find((b) => b.id === app.students?.batch_id);
+                    const isSelected = selectedAppIds.includes(app.id);
+                    const elig = ELIGIBILITY_CONFIG[app.eligibility_status || "eligible"] || ELIGIBILITY_CONFIG.eligible;
+                    const stg = STAGE_CONFIG[app.status || "applied"] || STAGE_CONFIG.applied;
+                    const currentRoundScore = app.round_scores?.[app.current_round]?.score;
+
                     return (
-                      <tr key={app.id} style={{ borderBottom: "1px solid #f1f5f9", background: i % 2 === 0 ? "#fff" : "#fafafa" }}>
-                        <td style={{ padding: "12px 16px" }}>
+                      <tr
+                        key={app.id}
+                        style={{
+                          borderBottom: "1px solid #f1f5f9",
+                          background: isSelected ? "#f0f7ff" : i % 2 === 0 ? "#fff" : "#fafafa",
+                          transition: "background 0.15s",
+                        }}
+                      >
+                        <td style={{ padding: "12px 14px" }}>
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setSelectedAppIds((prev) => [...prev, app.id]);
+                              } else {
+                                setSelectedAppIds((prev) => prev.filter((id) => id !== app.id));
+                              }
+                            }}
+                            style={{ cursor: "pointer" }}
+                          />
+                        </td>
+                        <td style={{ padding: "12px 14px" }}>
                           <button
                             type="button"
-                            onClick={() => { setCandidateApp(app); setCandidateModalOpen(true); }}
+                            onClick={() => openCandidateModal(app)}
                             style={{
                               background: "none",
                               border: "none",
@@ -1662,73 +2335,115 @@ export default function CareerAdminView({
                               alignItems: "center",
                               gap: "4px",
                             }}
-                            title="Click to view candidate details & screening answers"
+                            title="Click to view candidate snapshot, recruitment history & answers"
                           >
                             {app.students?.name || app.profiles?.full_name || "—"}
                             <Eye size={12} color="#64748b" />
                           </button>
-                          <div style={{ fontSize: "12px", color: "#64748b" }}>
+                          <div style={{ fontSize: "12px", color: "#64748b", marginTop: "2px" }}>
                             {app.students?.student_id && <span>{app.students.student_id} &bull; </span>}
                             {app.profiles?.email}
                           </div>
                         </td>
-                        <td style={{ padding: "12px 16px" }}>
-                          <div style={{ fontWeight: 600 }}>{app.career_opportunities?.title}</div>
+                        <td style={{ padding: "12px 14px" }}>
+                          <div style={{ fontWeight: 600, color: "#0f172a" }}>{app.career_opportunities?.title}</div>
                           <div style={{ fontSize: "12px", color: "#64748b" }}>{app.career_opportunities?.company_name}</div>
                         </td>
-                        <td style={{ padding: "12px 16px" }}>
+                        <td style={{ padding: "12px 14px" }}>
                           <div>{dept?.name || "—"}</div>
                           <div style={{ fontSize: "12px", color: "#64748b" }}>{batch?.name || "—"}</div>
                         </td>
-                        <td style={{ padding: "12px 16px", color: "#64748b", whiteSpace: "nowrap" }}>
-                          {new Date(app.applied_at).toLocaleDateString()}
+                        <td style={{ padding: "12px 14px" }}>
+                          <span
+                            style={{
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: "4px",
+                              padding: "3px 8px",
+                              borderRadius: "6px",
+                              fontSize: "11px",
+                              fontWeight: 700,
+                              background: elig.bg,
+                              color: elig.color,
+                              border: `1px solid ${elig.border}`,
+                            }}
+                            title={app.eligibility_reasons?.join("\n") || "Met all criteria"}
+                          >
+                            {elig.label}
+                          </span>
                         </td>
-                        <td style={{ padding: "12px 16px" }}>
-                          {app.resume_url ? (
-                            <a href={app.resume_url} target="_blank" rel="noreferrer"
-                              style={{ color: "#2563eb", display: "inline-flex", alignItems: "center", gap: "4px", fontWeight: 600 }}>
-                              View <ExternalLink size={12} />
-                            </a>
-                          ) : <span style={{ color: "#94a3b8" }}>—</span>}
+                        <td style={{ padding: "12px 14px" }}>
+                          <div style={{ fontWeight: 600, fontSize: "12px", color: "#334155" }}>
+                            {app.current_round || "Application Submitted"}
+                          </div>
+                          {currentRoundScore !== undefined && (
+                            <div style={{ fontSize: "11px", fontWeight: 700, color: "#4f46e5", marginTop: "2px" }}>
+                              Score: {currentRoundScore}/100
+                            </div>
+                          )}
                         </td>
-                        <td style={{ padding: "12px 16px" }}>
+                        <td style={{ padding: "12px 14px" }}>
                           <select
                             value={app.status}
                             onChange={(e) => updateCandidateStatus(app.id, e.target.value)}
                             style={{
-                              padding: "5px 8px", fontSize: "12px", fontWeight: 700, borderRadius: "8px",
-                              border: "1px solid #d1d5db", cursor: "pointer",
-                              background:
-                                app.status === "offered" ? "#dcfce7" :
-                                app.status === "rejected" ? "#fee2e2" :
-                                app.status === "interview" ? "#fef3c7" :
-                                app.status === "screening" ? "#ede9fe" :
-                                "#f8fafc",
-                              color:
-                                app.status === "offered" ? "#166534" :
-                                app.status === "rejected" ? "#b91c1c" :
-                                app.status === "interview" ? "#92400e" :
-                                app.status === "screening" ? "#6d28d9" :
-                                "#374151",
+                              padding: "4px 8px",
+                              fontSize: "12px",
+                              fontWeight: 700,
+                              borderRadius: "7px",
+                              border: `1px solid ${stg.border}`,
+                              cursor: "pointer",
+                              background: stg.bg,
+                              color: stg.color,
                             }}
                           >
-                            {["applied","screening","interview","offered","rejected","withdrawn"].map((s) => (
-                              <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>
+                            {Object.keys(STAGE_CONFIG).map((s) => (
+                              <option key={s} value={s}>{STAGE_CONFIG[s].label}</option>
                             ))}
                           </select>
                         </td>
-                        <td style={{ padding: "12px 16px" }}>
-                          <button
-                            onClick={() => { setActiveApp(app); setFeedbackText(app.feedback || ""); setFeedbackOpen(true); }}
-                            style={{
-                              background: "transparent", border: "1px solid #d1d5db", cursor: "pointer",
-                              borderRadius: "7px", padding: "5px 10px", fontSize: "12px",
-                              color: "#374151", display: "flex", alignItems: "center", gap: "4px", fontWeight: 600,
-                            }}
-                          >
-                            <MessageSquare size={13} />
-                            {app.feedback ? "Edit" : "Add"}
-                          </button>
+                        <td style={{ padding: "12px 14px" }}>
+                          <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                            <button
+                              type="button"
+                              onClick={() => openRoundModal(app, false)}
+                              style={{
+                                background: "#f8fafc",
+                                border: "1px solid #d1d5db",
+                                borderRadius: "6px",
+                                padding: "4px 8px",
+                                fontSize: "11px",
+                                fontWeight: 700,
+                                cursor: "pointer",
+                                color: "#4f46e5",
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: "3px",
+                              }}
+                              title="Record round scores and evaluation"
+                            >
+                              <Award size={12} /> Round
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => { setActiveApp(app); setFeedbackText(app.feedback || ""); setFeedbackOpen(true); }}
+                              style={{
+                                background: "transparent",
+                                border: "1px solid #d1d5db",
+                                borderRadius: "6px",
+                                padding: "4px 7px",
+                                fontSize: "11px",
+                                color: "#374151",
+                                cursor: "pointer",
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: "3px",
+                              }}
+                              title="Coordinator Notes"
+                            >
+                              <MessageSquare size={12} />
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     );
@@ -2647,17 +3362,26 @@ export default function CareerAdminView({
                   </FormSection>
                 )}
 
-                {/* ── QUESTIONS SECTION ── */}
+                {/* ── QUESTIONS & ROUNDS SECTION ── */}
                 {formSection === "questions" && (
-                  <FormSection title="Custom Application Questions" icon={<MessageSquare size={16} />} accent="#8b5cf6">
-                    <p style={{ margin: "0 0 16px", fontSize: "13px", color: "#64748b" }}>
-                      Add specific questions for applicants to answer when they apply. Answers will be shown in the ATS alongside their application.
-                    </p>
-                    <CustomQuestionsEditor
-                      questions={form.custom_questions}
-                      onChange={(q) => setForm({ ...form, custom_questions: q })}
-                    />
-                  </FormSection>
+                  <>
+                    <FormSection title="Custom Application Questions" icon={<MessageSquare size={16} />} accent="#8b5cf6">
+                      <p style={{ margin: "0 0 16px", fontSize: "13px", color: "#64748b" }}>
+                        Add specific screening questions for applicants to answer when they apply. Answers will be evaluated and visible in the ATS.
+                      </p>
+                      <CustomQuestionsEditor
+                        questions={form.custom_questions}
+                        onChange={(q) => setForm({ ...form, custom_questions: q })}
+                      />
+                    </FormSection>
+
+                    <FormSection title="Recruitment Rounds & Pipeline" icon={<Layers size={16} />} accent="#4f46e5">
+                      <RecruitmentRoundsEditor
+                        rounds={form.recruitment_rounds}
+                        onChange={(r) => setForm({ ...form, recruitment_rounds: r })}
+                      />
+                    </FormSection>
+                  </>
                 )}
               </div>
 
@@ -2793,7 +3517,7 @@ export default function CareerAdminView({
       )}
 
       {/* ══════════════════════════════════════════
-          CANDIDATE DETAILS MODAL (ATS)
+          CANDIDATE DETAILS MODAL (ATS STAGE 6)
       ══════════════════════════════════════════ */}
       {candidateModalOpen && candidateApp && (
         <div
@@ -2805,21 +3529,35 @@ export default function CareerAdminView({
         >
           <div
             style={{
-              background: "#fff", borderRadius: "18px", width: "100%", maxWidth: "680px",
-              maxHeight: "85vh", overflowY: "auto", padding: "28px", boxShadow: "0 24px 48px rgba(0,0,0,0.18)",
+              background: "#fff", borderRadius: "18px", width: "100%", maxWidth: "780px",
+              maxHeight: "88vh", overflowY: "auto", padding: "28px", boxShadow: "0 24px 48px rgba(0,0,0,0.18)",
             }}
           >
+            {/* Header */}
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "18px" }}>
               <div>
-                <span style={{ fontSize: "12px", fontWeight: 700, color: "#2563eb", textTransform: "uppercase" }}>
-                  Application Details
-                </span>
-                <h2 style={{ margin: "4px 0 2px", fontSize: "20px", fontWeight: 800, color: "#0f172a" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "4px" }}>
+                  <span style={{ fontSize: "11px", fontWeight: 700, color: "#2563eb", textTransform: "uppercase" }}>
+                    Candidate Profile &amp; Recruitment Record
+                  </span>
+                  {candidateApp.eligibility_status && (
+                    <span
+                      style={{
+                        padding: "2px 8px", borderRadius: "6px", fontSize: "11px", fontWeight: 700,
+                        background: ELIGIBILITY_CONFIG[candidateApp.eligibility_status]?.bg || "#f1f5f9",
+                        color: ELIGIBILITY_CONFIG[candidateApp.eligibility_status]?.color || "#334155",
+                      }}
+                    >
+                      {ELIGIBILITY_CONFIG[candidateApp.eligibility_status]?.label || candidateApp.eligibility_status}
+                    </span>
+                  )}
+                </div>
+                <h2 style={{ margin: "2px 0", fontSize: "20px", fontWeight: 800, color: "#0f172a" }}>
                   {candidateApp.students?.name || candidateApp.profiles?.full_name || "Candidate"}
                 </h2>
                 <div style={{ fontSize: "13px", color: "#64748b" }}>
                   {candidateApp.students?.student_id && <span>Roll No: {candidateApp.students.student_id} &bull; </span>}
-                  {candidateApp.profiles?.email}
+                  {candidateApp.profiles?.email} &bull; {candidateApp.career_opportunities?.company_name} — {candidateApp.career_opportunities?.title}
                 </div>
               </div>
               <button
@@ -2830,115 +3568,467 @@ export default function CareerAdminView({
               </button>
             </div>
 
-            {/* Application Meta Bar */}
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "12px", padding: "14px", background: "#f8fafc", borderRadius: "12px", border: "1px solid #e2e8f0", marginBottom: "20px" }}>
-              <div>
-                <span style={{ fontSize: "11px", color: "#64748b", display: "block" }}>Opportunity</span>
-                <strong style={{ fontSize: "13px" }}>{candidateApp.career_opportunities?.title}</strong>
-              </div>
-              <div>
-                <span style={{ fontSize: "11px", color: "#64748b", display: "block" }}>Company</span>
-                <strong style={{ fontSize: "13px" }}>{candidateApp.career_opportunities?.company_name}</strong>
-              </div>
-              <div>
-                <span style={{ fontSize: "11px", color: "#64748b", display: "block" }}>Applied On</span>
-                <strong style={{ fontSize: "13px" }}>{new Date(candidateApp.applied_at).toLocaleDateString()}</strong>
-              </div>
-              <div>
-                <span style={{ fontSize: "11px", color: "#64748b", display: "block" }}>Current Stage</span>
-                <strong style={{ fontSize: "13px", textTransform: "capitalize", color: "#2563eb" }}>{candidateApp.status}</strong>
-              </div>
-            </div>
-
-            {/* Resume Link */}
-            <div style={{ marginBottom: "20px" }}>
-              <label style={{ fontSize: "13px", fontWeight: 700, display: "block", marginBottom: "6px" }}>Submitted Resume</label>
-              {candidateApp.resume_url ? (
-                <a
-                  href={candidateApp.resume_url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="secondary-btn"
-                  style={{ display: "inline-flex", alignItems: "center", gap: "8px", textDecoration: "none", fontSize: "13px" }}
+            {/* Modal Tabs */}
+            <div
+              style={{
+                display: "flex",
+                gap: "4px",
+                borderBottom: "1px solid #e2e8f0",
+                marginBottom: "20px",
+              }}
+            >
+              {[
+                { key: "overview", label: "Overview & Answers", icon: <FileText size={14} /> },
+                { key: "snapshot", label: "Academic Snapshot", icon: <GraduationCap size={14} /> },
+                { key: "history", label: `Timeline & Logs (${candidateAuditHistory.length})`, icon: <History size={14} /> },
+              ].map((t) => (
+                <button
+                  key={t.key}
+                  type="button"
+                  onClick={() => setCandidateModalTab(t.key as any)}
+                  style={{
+                    padding: "9px 16px",
+                    border: "none",
+                    borderBottom: candidateModalTab === t.key ? "2px solid #2563eb" : "2px solid transparent",
+                    background: "none",
+                    fontWeight: candidateModalTab === t.key ? 700 : 500,
+                    color: candidateModalTab === t.key ? "#2563eb" : "#64748b",
+                    fontSize: "13px",
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "6px",
+                  }}
                 >
-                  <ExternalLink size={14} /> Open Resume in New Tab
-                </a>
-              ) : (
-                <span style={{ color: "#94a3b8", fontSize: "13px" }}>No resume link provided</span>
-              )}
+                  {t.icon} {t.label}
+                </button>
+              ))}
             </div>
 
-            {/* Cover Letter */}
-            {candidateApp.cover_letter && (
-              <div style={{ marginBottom: "20px" }}>
-                <label style={{ fontSize: "13px", fontWeight: 700, display: "block", marginBottom: "6px" }}>Cover Letter / Note</label>
-                <div style={{ padding: "12px 14px", background: "#f8fafc", borderRadius: "10px", fontSize: "13px", color: "#334155", border: "1px solid #e2e8f0", whiteSpace: "pre-wrap", lineHeight: 1.6 }}>
-                  {candidateApp.cover_letter}
+            {/* TAB 1: OVERVIEW & RESPONSES */}
+            {candidateModalTab === "overview" && (
+              <div>
+                {/* Meta Bar */}
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: "12px", padding: "14px", background: "#f8fafc", borderRadius: "12px", border: "1px solid #e2e8f0", marginBottom: "20px" }}>
+                  <div>
+                    <span style={{ fontSize: "11px", color: "#64748b", display: "block" }}>Applied On</span>
+                    <strong style={{ fontSize: "13px" }}>{new Date(candidateApp.applied_at).toLocaleDateString()}</strong>
+                  </div>
+                  <div>
+                    <span style={{ fontSize: "11px", color: "#64748b", display: "block" }}>Current Stage</span>
+                    <strong style={{ fontSize: "13px", textTransform: "capitalize", color: "#2563eb" }}>
+                      {STAGE_CONFIG[candidateApp.status]?.label || candidateApp.status}
+                    </strong>
+                  </div>
+                  <div>
+                    <span style={{ fontSize: "11px", color: "#64748b", display: "block" }}>Current Round</span>
+                    <strong style={{ fontSize: "13px", color: "#334155" }}>{candidateApp.current_round || "Application Review"}</strong>
+                  </div>
+                  <div>
+                    <span style={{ fontSize: "11px", color: "#64748b", display: "block" }}>Withdrawal</span>
+                    <strong style={{ fontSize: "13px", color: candidateApp.withdrawn_at ? "#b91c1c" : "#166534" }}>
+                      {candidateApp.withdrawn_at ? "Withdrawn" : "Active"}
+                    </strong>
+                  </div>
                 </div>
+
+                {/* Resume Link */}
+                <div style={{ marginBottom: "20px" }}>
+                  <label style={{ fontSize: "13px", fontWeight: 700, display: "block", marginBottom: "6px" }}>Submitted Resume</label>
+                  {candidateApp.resume_url ? (
+                    <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                      <a
+                        href={candidateApp.resume_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="secondary-btn"
+                        style={{ display: "inline-flex", alignItems: "center", gap: "8px", textDecoration: "none", fontSize: "13px" }}
+                      >
+                        <ExternalLink size={14} /> Open Submitted CV
+                      </a>
+                      {candidateApp.profile_snapshot?.cv_version && (
+                        <span style={{ fontSize: "12px", color: "#64748b" }}>
+                          (Version: <strong>{candidateApp.profile_snapshot.cv_version.name}</strong> &bull; {candidateApp.profile_snapshot.cv_version.file_name})
+                        </span>
+                      )}
+                    </div>
+                  ) : (
+                    <span style={{ color: "#94a3b8", fontSize: "13px" }}>No resume link provided</span>
+                  )}
+                </div>
+
+                {/* Cover Letter */}
+                {candidateApp.cover_letter && (
+                  <div style={{ marginBottom: "20px" }}>
+                    <label style={{ fontSize: "13px", fontWeight: 700, display: "block", marginBottom: "6px" }}>Cover Letter / Statement</label>
+                    <div style={{ padding: "12px 14px", background: "#f8fafc", borderRadius: "10px", fontSize: "13px", color: "#334155", border: "1px solid #e2e8f0", whiteSpace: "pre-wrap", lineHeight: 1.6 }}>
+                      {candidateApp.cover_letter}
+                    </div>
+                  </div>
+                )}
+
+                {/* Screening Answers */}
+                {candidateApp.custom_answers && Object.keys(candidateApp.custom_answers).length > 0 ? (
+                  <div style={{ marginBottom: "20px" }}>
+                    <label style={{ fontSize: "13px", fontWeight: 700, display: "block", marginBottom: "8px" }}>Custom Screening Responses</label>
+                    <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+                      {Object.entries(candidateApp.custom_answers).map(([qId, ans], idx) => {
+                        const qObj = candidateApp.career_opportunities?.custom_questions?.find((cq: any) => cq.id === qId);
+                        const qText = qObj?.question || `Question ${idx + 1}`;
+                        return (
+                          <div key={qId} style={{ padding: "12px 14px", background: "#f8fafc", borderRadius: "10px", border: "1px solid #e2e8f0" }}>
+                            <div style={{ fontSize: "12px", fontWeight: 700, color: "#475569", marginBottom: "4px" }}>
+                              {idx + 1}. {qText}
+                            </div>
+                            <div style={{ fontSize: "13px", color: "#0f172a", fontWeight: 600 }}>
+                              {String(ans) || "—"}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ fontSize: "12px", color: "#94a3b8", marginBottom: "20px" }}>
+                    No custom screening questions were configured for this drive.
+                  </div>
+                )}
               </div>
             )}
 
-            {/* Screening Answers */}
-            {candidateApp.custom_answers && Object.keys(candidateApp.custom_answers).length > 0 && (
-              <div style={{ marginBottom: "20px" }}>
-                <label style={{ fontSize: "13px", fontWeight: 700, display: "block", marginBottom: "8px" }}>Screening Questions & Responses</label>
-                <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-                  {Object.entries(candidateApp.custom_answers).map(([qId, ans], idx) => {
-                    const qObj = candidateApp.career_opportunities?.custom_questions?.find((cq: any) => cq.id === qId);
-                    const qText = qObj?.question || `Question ${idx + 1}`;
-                    return (
-                      <div key={qId} style={{ padding: "12px 14px", background: "#f8fafc", borderRadius: "10px", border: "1px solid #e2e8f0" }}>
-                        <div style={{ fontSize: "12px", fontWeight: 700, color: "#475569", marginBottom: "4px" }}>
-                          {idx + 1}. {qText}
+            {/* TAB 2: ACADEMIC SNAPSHOT */}
+            {candidateModalTab === "snapshot" && (
+              <div>
+                <div style={{ padding: "10px 14px", background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: "10px", fontSize: "12px", color: "#166534", marginBottom: "16px", display: "flex", alignItems: "center", gap: "8px" }}>
+                  <ShieldCheck size={16} />
+                  <span>Immutable institutional snapshot captured when the candidate applied. Guaranteed authentic &amp; non-repudiable.</span>
+                </div>
+
+                {(() => {
+                  const snap = candidateApp.profile_snapshot || {};
+                  const acad = snap.academic || {};
+                  return (
+                    <div>
+                      {/* Academic Cards */}
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: "10px", marginBottom: "18px" }}>
+                        <div style={{ padding: "12px", background: "#f8fafc", borderRadius: "10px", border: "1px solid #e2e8f0" }}>
+                          <span style={{ fontSize: "11px", color: "#64748b" }}>10th Marks</span>
+                          <div style={{ fontSize: "15px", fontWeight: 800, color: "#0f172a", marginTop: "2px" }}>
+                            {acad.marks_10th != null ? `${acad.marks_10th}%` : "—"}
+                            {acad.marks_10th_verified && <span style={{ color: "#16a34a", fontSize: "11px", marginLeft: "4px" }}>✓ Verified</span>}
+                          </div>
                         </div>
-                        <div style={{ fontSize: "13px", color: "#0f172a", fontWeight: 600 }}>
-                          {String(ans) || "—"}
+                        <div style={{ padding: "12px", background: "#f8fafc", borderRadius: "10px", border: "1px solid #e2e8f0" }}>
+                          <span style={{ fontSize: "11px", color: "#64748b" }}>12th Marks</span>
+                          <div style={{ fontSize: "15px", fontWeight: 800, color: "#0f172a", marginTop: "2px" }}>
+                            {acad.marks_12th != null ? `${acad.marks_12th}%` : "—"}
+                            {acad.marks_12th_verified && <span style={{ color: "#16a34a", fontSize: "11px", marginLeft: "4px" }}>✓ Verified</span>}
+                          </div>
+                        </div>
+                        <div style={{ padding: "12px", background: "#f8fafc", borderRadius: "10px", border: "1px solid #e2e8f0" }}>
+                          <span style={{ fontSize: "11px", color: "#64748b" }}>Snapshot CGPA</span>
+                          <div style={{ fontSize: "15px", fontWeight: 800, color: "#1e40af", marginTop: "2px" }}>
+                            {acad.cgpa != null ? Number(acad.cgpa).toFixed(2) : "—"}
+                          </div>
+                        </div>
+                        <div style={{ padding: "12px", background: "#f8fafc", borderRadius: "10px", border: "1px solid #e2e8f0" }}>
+                          <span style={{ fontSize: "11px", color: "#64748b" }}>Active Backlogs</span>
+                          <div style={{ fontSize: "15px", fontWeight: 800, color: (acad.active_backlogs || 0) > 0 ? "#b91c1c" : "#166534", marginTop: "2px" }}>
+                            {acad.active_backlogs ?? 0}
+                          </div>
                         </div>
                       </div>
-                    );
-                  })}
-                </div>
+
+                      {/* SGPA Semester History Snapshot */}
+                      {acad.sgpa_records && acad.sgpa_records.length > 0 && (
+                        <div style={{ marginBottom: "20px" }}>
+                          <label style={{ fontSize: "12px", fontWeight: 700, display: "block", marginBottom: "6px", color: "#334155" }}>
+                            Official Semester SGPA Records at Application
+                          </label>
+                          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px", border: "1px solid #e2e8f0" }}>
+                            <thead>
+                              <tr style={{ background: "#f8fafc", textAlign: "left" }}>
+                                <th style={{ padding: "6px 10px", borderBottom: "1px solid #e2e8f0" }}>Semester</th>
+                                <th style={{ padding: "6px 10px", borderBottom: "1px solid #e2e8f0" }}>SGPA</th>
+                                <th style={{ padding: "6px 10px", borderBottom: "1px solid #e2e8f0" }}>CGPA</th>
+                                <th style={{ padding: "6px 10px", borderBottom: "1px solid #e2e8f0" }}>Backlogs</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {acad.sgpa_records.map((r: any) => (
+                                <tr key={r.id || r.semester_no} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                                  <td style={{ padding: "6px 10px", fontWeight: 600 }}>{r.semester_name || `Sem ${r.semester_no}`}</td>
+                                  <td style={{ padding: "6px 10px", color: "#1e40af", fontWeight: 700 }}>{Number(r.sgpa).toFixed(2)}</td>
+                                  <td style={{ padding: "6px 10px", color: "#047857", fontWeight: 700 }}>{r.cgpa ? Number(r.cgpa).toFixed(2) : "—"}</td>
+                                  <td style={{ padding: "6px 10px" }}>{r.backlogs || 0}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+
+                      {/* Skills Snapshot */}
+                      {snap.skills && (
+                        <div style={{ marginBottom: "16px" }}>
+                          <label style={{ fontSize: "12px", fontWeight: 700, display: "block", marginBottom: "6px" }}>Technical Skills Snapshot</label>
+                          <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                            {(snap.skills.technical || []).map((sk: string) => (
+                              <span key={sk} style={{ padding: "2px 8px", borderRadius: "12px", background: "#eff6ff", color: "#1d4ed8", fontSize: "11px", fontWeight: 600 }}>
+                                {sk}
+                              </span>
+                            ))}
+                            {(snap.skills.technical || []).length === 0 && <span style={{ color: "#94a3b8", fontSize: "12px" }}>None recorded</span>}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
             )}
 
-            {/* Stage Updater */}
-            <div style={{ marginBottom: "20px", padding: "16px", background: "#f1f5f9", borderRadius: "12px" }}>
-              <label style={{ fontSize: "13px", fontWeight: 700, display: "block", marginBottom: "8px" }}>Update Application Stage</label>
-              <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-                {["applied", "screening", "interview", "offered", "rejected", "withdrawn"].map((st) => (
+            {/* TAB 3: RECRUITMENT TIMELINE & AUDIT LOGS */}
+            {candidateModalTab === "history" && (
+              <div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px" }}>
+                  <label style={{ fontSize: "13px", fontWeight: 700, color: "#1e293b" }}>
+                    Recruitment Audit Trail &amp; Rounds
+                  </label>
+                  <button
+                    type="button"
+                    className="primary-btn"
+                    onClick={() => openRoundModal(candidateApp, false)}
+                    style={{ padding: "5px 12px", fontSize: "12px", display: "inline-flex", alignItems: "center", gap: "4px" }}
+                  >
+                    <Award size={13} /> Record Round / Score
+                  </button>
+                </div>
+
+                {loadingHistory ? (
+                  <div style={{ padding: "30px", textAlign: "center", color: "#64748b", fontSize: "13px" }}>
+                    Loading audit history...
+                  </div>
+                ) : candidateAuditHistory.length === 0 ? (
+                  <div style={{ padding: "30px", textAlign: "center", color: "#94a3b8", fontSize: "13px" }}>
+                    No audit records logged yet. Updates to stages or round scores will be recorded here automatically.
+                  </div>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+                    {candidateAuditHistory.map((item) => (
+                      <div
+                        key={item.id}
+                        style={{
+                          padding: "12px 16px",
+                          borderRadius: "10px",
+                          background: "#f8fafc",
+                          border: "1px solid #e2e8f0",
+                          display: "flex",
+                          justifyContent: "space-between",
+                          gap: "12px",
+                        }}
+                      >
+                        <div>
+                          <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "4px" }}>
+                            {item.from_status && (
+                              <span style={{ fontSize: "11px", color: "#64748b", textTransform: "capitalize" }}>
+                                {item.from_status} →
+                              </span>
+                            )}
+                            <span
+                              style={{
+                                padding: "2px 8px",
+                                borderRadius: "6px",
+                                fontSize: "11px",
+                                fontWeight: 700,
+                                background: STAGE_CONFIG[item.to_status]?.bg || "#f1f5f9",
+                                color: STAGE_CONFIG[item.to_status]?.color || "#334155",
+                              }}
+                            >
+                              {STAGE_CONFIG[item.to_status]?.label || item.to_status}
+                            </span>
+                            {item.round_name && (
+                              <span style={{ fontSize: "12px", fontWeight: 700, color: "#4f46e5" }}>
+                                &bull; {item.round_name}
+                              </span>
+                            )}
+                            {item.score != null && (
+                              <span style={{ fontSize: "11px", fontWeight: 800, padding: "1px 6px", background: "#e0e7ff", color: "#4338ca", borderRadius: "4px" }}>
+                                {item.score}/100
+                              </span>
+                            )}
+                          </div>
+                          {item.notes && (
+                            <div style={{ fontSize: "12px", color: "#334155", marginTop: "4px" }}>
+                              {item.notes}
+                            </div>
+                          )}
+                          <div style={{ fontSize: "11px", color: "#94a3b8", marginTop: "4px" }}>
+                            By {item.profiles?.full_name || item.profiles?.email || "University Staff"} &bull; {new Date(item.created_at).toLocaleString()}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Stage Updater Bar */}
+            <div style={{ marginTop: "24px", paddingTop: "18px", borderTop: "1px solid #e2e8f0" }}>
+              <label style={{ fontSize: "12px", fontWeight: 700, display: "block", marginBottom: "8px", color: "#334155" }}>
+                Quick Advance Stage
+              </label>
+              <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", marginBottom: "16px" }}>
+                {Object.keys(STAGE_CONFIG).map((st) => (
                   <button
                     key={st}
                     type="button"
-                    onClick={async () => {
-                      await updateCandidateStatus(candidateApp.id, st);
-                      setCandidateApp({ ...candidateApp, status: st });
-                    }}
+                    onClick={() => updateCandidateStatus(candidateApp.id, st)}
                     style={{
-                      padding: "6px 14px",
-                      borderRadius: "8px",
+                      padding: "5px 12px",
+                      borderRadius: "7px",
                       fontSize: "12px",
                       fontWeight: 700,
                       cursor: "pointer",
-                      textTransform: "capitalize",
                       border: candidateApp.status === st ? "2px solid #2563eb" : "1px solid #cbd5e1",
                       background: candidateApp.status === st ? "#dbeafe" : "#fff",
                       color: candidateApp.status === st ? "#1e40af" : "#475569",
                     }}
                   >
-                    {st}
+                    {STAGE_CONFIG[st].label}
                   </button>
                 ))}
               </div>
+
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <button
+                  type="button"
+                  className="secondary-btn"
+                  onClick={() => openRoundModal(candidateApp, false)}
+                  style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "13px" }}
+                >
+                  <Award size={14} /> Record Round / Score
+                </button>
+                <button
+                  type="button"
+                  className="primary-btn"
+                  onClick={() => setCandidateModalOpen(false)}
+                >
+                  Done
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ══════════════════════════════════════════
+          RECORD ROUND / ASSESSMENT MODAL
+      ══════════════════════════════════════════ */}
+      {roundModalOpen && (
+        <div
+          style={{
+            position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            zIndex: 2003, padding: "20px",
+          }}
+        >
+          <div
+            style={{
+              background: "#fff", borderRadius: "18px", width: "100%", maxWidth: "520px",
+              padding: "24px", boxShadow: "0 24px 48px rgba(0,0,0,0.18)",
+            }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: "18px", fontWeight: 800 }}>Record Round / Assessment Result</h3>
+                <p style={{ margin: "2px 0 0", fontSize: "12px", color: "#64748b" }}>
+                  {roundForm.is_bulk
+                    ? `Recording for ${selectedAppIds.length} selected candidates`
+                    : activeRoundApp?.students?.name || activeRoundApp?.profiles?.full_name || "Candidate"}
+                </p>
+              </div>
+              <button onClick={() => setRoundModalOpen(false)} style={{ background: "transparent", border: "none", cursor: "pointer", color: "#94a3b8" }}>
+                <X size={20} />
+              </button>
             </div>
 
-            <div style={{ display: "flex", justifyContent: "flex-end" }}>
-              <button
-                type="button"
-                className="secondary-btn"
-                onClick={() => setCandidateModalOpen(false)}
-              >
-                Close
-              </button>
+            <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+              <div>
+                <label style={{ fontSize: "12px", fontWeight: 700, display: "block", marginBottom: "6px" }}>
+                  Round Name *
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. Online Assessment, Technical Interview 1, HR Round"
+                  value={roundForm.round_name}
+                  onChange={(e) => setRoundForm({ ...roundForm, round_name: e.target.value })}
+                  style={{ width: "100%", padding: "8px 10px", borderRadius: "8px", border: "1px solid #cbd5e1", fontSize: "13px" }}
+                />
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+                <div>
+                  <label style={{ fontSize: "12px", fontWeight: 700, display: "block", marginBottom: "6px" }}>
+                    Score (0 - 100)
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    max="100"
+                    placeholder="e.g. 85"
+                    value={roundForm.score}
+                    onChange={(e) => setRoundForm({ ...roundForm, score: e.target.value })}
+                    style={{ width: "100%", padding: "8px 10px", borderRadius: "8px", border: "1px solid #cbd5e1", fontSize: "13px" }}
+                  />
+                </div>
+                <div>
+                  <label style={{ fontSize: "12px", fontWeight: 700, display: "block", marginBottom: "6px" }}>
+                    Move to Stage
+                  </label>
+                  <select
+                    value={roundForm.to_status}
+                    onChange={(e) => setRoundForm({ ...roundForm, to_status: e.target.value })}
+                    style={{ width: "100%", padding: "8px 10px", borderRadius: "8px", border: "1px solid #cbd5e1", fontSize: "13px" }}
+                  >
+                    {Object.keys(STAGE_CONFIG).map((st) => (
+                      <option key={st} value={st}>{STAGE_CONFIG[st].label}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label style={{ fontSize: "12px", fontWeight: 700, display: "block", marginBottom: "6px" }}>
+                  Feedback &amp; Evaluation Notes
+                </label>
+                <textarea
+                  rows={3}
+                  placeholder="e.g. Candidate excelled in data structures and problem solving. Recommended for Technical Interview 2."
+                  value={roundForm.notes}
+                  onChange={(e) => setRoundForm({ ...roundForm, notes: e.target.value })}
+                  style={{ width: "100%", padding: "8px 10px", borderRadius: "8px", border: "1px solid #cbd5e1", fontSize: "13px", fontFamily: "inherit" }}
+                />
+              </div>
+
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px", marginTop: "10px" }}>
+                <button
+                  type="button"
+                  className="secondary-btn"
+                  onClick={() => setRoundModalOpen(false)}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="primary-btn"
+                  onClick={submitRoundResult}
+                  style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}
+                >
+                  <CheckCircle size={14} /> Save Round Result
+                </button>
+              </div>
             </div>
           </div>
         </div>
