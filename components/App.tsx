@@ -3378,7 +3378,7 @@ function ReportsPage({
       );
       const targetList = currentGroupStudents.length > 0 ? currentGroupStudents : fallbackDemoStudents(department, batch, group);
 
-      const demoDates = ["2026-11-04", "2026-11-05", "2026-11-06", "2026-11-09", "2026-11-12"];
+      const demoDates = ["2026-07-31", "2026-08-07", "2026-08-14", "2026-08-21", "2026-10-30"];
       const demoSessionsList: ReportSession[] = demoDates.map((d, i) => ({
         id: `demo-sess-${i + 1}`,
         attendance_date: d,
@@ -3413,6 +3413,47 @@ function ReportsPage({
     setLoading(false);
   }
 
+  function formatSessionHeader(dateStr: string, index?: number): string {
+    try {
+      const raw = (dateStr || "").split("T")[0];
+      const parts = raw.split("-");
+      if (parts.length === 3) {
+        const year = parts[0];
+        const month = parts[1].padStart(2, "0");
+        const day = parts[2].padStart(2, "0");
+        return `Date ${day}.${month}.${year}`;
+      }
+      const d = new Date(dateStr);
+      if (!isNaN(d.getTime())) {
+        const day = String(d.getDate()).padStart(2, "0");
+        const month = String(d.getMonth() + 1).padStart(2, "0");
+        const year = d.getFullYear();
+        return `Date ${day}.${month}.${year}`;
+      }
+    } catch {
+      // fallback
+    }
+    return `Date ${dateStr || (index !== undefined ? `Session ${index + 1}` : "Session")}`;
+  }
+
+  function getSessionHeaders(sessionsList: ReportSession[]): string[] {
+    const dateCounts: Record<string, number> = {};
+    sessionsList.forEach((s) => {
+      const key = formatSessionHeader(s.attendance_date);
+      dateCounts[key] = (dateCounts[key] || 0) + 1;
+    });
+
+    const dateOccurrences: Record<string, number> = {};
+    return sessionsList.map((s) => {
+      const base = formatSessionHeader(s.attendance_date);
+      if (dateCounts[base] > 1) {
+        dateOccurrences[base] = (dateOccurrences[base] || 0) + 1;
+        return `${base} (S${dateOccurrences[base]})`;
+      }
+      return base;
+    });
+  }
+
   const currentGroupStudents = students.filter(
     (student) => student.group_id === group && student.is_active !== false
   );
@@ -3421,20 +3462,28 @@ function ReportsPage({
     ? currentGroupStudents
     : (isDemoMode ? fallbackDemoStudents(department, batch, group) : []);
 
+  const sessionHeaders = getSessionHeaders(sessions);
+
   const reportRows = targetStudents.map((student) => {
-    const studentRecords = records.filter(
-      (record) => record.student_id === student.id || record.student_id === student.student_id
-    );
+    const sessionStatuses: ("P" | "A")[] = sessions.map((sess) => {
+      const rec = records.find(
+        (record) =>
+          record.session_id === sess.id &&
+          (record.student_id === student.id || record.student_id === student.student_id)
+      );
+      if (!rec) return "A";
+      const st = String(rec.status).trim().toUpperCase();
+      return st === "P" || st === "PRESENT" ? "P" : "A";
+    });
 
     const held = sessions.length;
-    const present = studentRecords.filter(
-      (record) => record.status === "P"
-    ).length;
+    const present = sessionStatuses.filter((s) => s === "P").length;
     const absent = Math.max(0, held - present);
     const percentage = held > 0 ? (present / held) * 100 : 0;
 
     return {
       student,
+      sessionStatuses,
       present,
       absent,
       held,
@@ -3451,20 +3500,97 @@ function ReportsPage({
   function exportReport() {
     if (!reportRows.length) return;
 
-    const rows = reportRows.map((row) => ({
-      "Student ID": row.student.student_id,
-      Name: row.student.name,
-      SLR: row.student.slr || "",
-      Present: row.present,
-      Absent: row.absent,
-      "Total Held": row.held,
-      "Attendance %": Number(row.percentage.toFixed(2)),
-    }));
+    // Row 1: Merged Category Header (Student Details | Session Dates | Attendance Summary)
+    const row1: string[] = [
+      "Student Details",
+      "",
+      "",
+      ...sessions.map((_, i) => (i === 0 ? "Session Attendance" : "")),
+      "Attendance Summary",
+      "",
+      "",
+      "",
+    ];
 
-    const worksheet = XLSX.utils.json_to_sheet(rows);
+    // Row 2: Main Column Headers
+    const row2: string[] = [
+      "Sl",
+      "Student ID",
+      "Student Name",
+      ...sessionHeaders,
+      "Total Held",
+      "Present",
+      "Absent",
+      "Total %",
+    ];
+
+    // Data rows: Sl, Student ID, Name, [P/A for each session], Total Held, Present, Absent, Total %
+    const dataRows = reportRows.map((row, idx) => [
+      idx + 1,
+      row.student.student_id,
+      row.student.name,
+      ...row.sessionStatuses,
+      row.held,
+      row.present,
+      row.absent,
+      `${row.percentage.toFixed(2)}%`,
+    ]);
+
+    const aoa = [row1, row2, ...dataRows];
+    const worksheet = XLSX.utils.aoa_to_sheet(aoa);
+
+    const totalCols = row2.length;
+    const sessionCount = sessions.length;
+
+    // Configure Excel Merges for Row 1
+    const merges: XLSX.Range[] = [
+      { s: { r: 0, c: 0 }, e: { r: 0, c: 2 } }, // Merge A1:C1 -> "Student Details"
+    ];
+
+    if (sessionCount > 0) {
+      merges.push({ s: { r: 0, c: 3 }, e: { r: 0, c: 2 + sessionCount } }); // Session Attendance
+      merges.push({ s: { r: 0, c: 3 + sessionCount }, e: { r: 0, c: totalCols - 1 } }); // Summary
+    } else {
+      merges.push({ s: { r: 0, c: 3 }, e: { r: 0, c: totalCols - 1 } });
+    }
+
+    worksheet["!merges"] = merges;
+
+    // Configure Excel Column Widths
+    worksheet["!cols"] = [
+      { wch: 6 },  // Sl
+      { wch: 18 }, // Student ID
+      { wch: 28 }, // Student Name
+      ...sessions.map(() => ({ wch: 16 })), // Date columns
+      { wch: 12 }, // Total Held
+      { wch: 10 }, // Present
+      { wch: 10 }, // Absent
+      { wch: 14 }, // Total %
+    ];
+
+    // AutoFilter on row 2
+    worksheet["!autofilter"] = {
+      ref: XLSX.utils.encode_range({
+        s: { r: 1, c: 0 },
+        e: { r: aoa.length - 1, c: totalCols - 1 },
+      }),
+    };
+
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, "Attendance Report");
-    XLSX.writeFile(workbook, `attendance_report_${new Date().toISOString().slice(0, 10)}.xlsx`);
+
+    const deptObj = departments.find((d) => d.id === department);
+    const batchObj = batches.find((b) => b.id === batch);
+    const groupObj = groups.find((g) => g.id === group);
+
+    const filenameParts = [
+      "attendance_report",
+      deptObj?.code || deptObj?.name || "",
+      groupObj?.name || batchObj?.name || "",
+      new Date().toISOString().slice(0, 10),
+    ].filter(Boolean);
+
+    XLSX.writeFile(workbook, `${filenameParts.join("_")}.xlsx`);
   }
 
   return (
@@ -3666,33 +3792,136 @@ function ReportsPage({
           </div>
 
           {/* Report Data Table */}
-          <div className="table-wrap">
-            <table>
+          <div className="table-wrap" style={{ overflowX: "auto" }}>
+            <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "13px" }}>
               <thead>
-                <tr>
-                  <th>Student ID</th>
-                  <th>Name</th>
-                  <th>SLR</th>
-                  <th>Present</th>
-                  <th>Absent</th>
-                  <th>Held</th>
-                  <th>Attendance %</th>
+                {/* Category Header Row (Student Details | Session Attendance | Attendance Summary) */}
+                <tr style={{ background: "#f1f5f9", borderBottom: "1px solid #cbd5e1" }}>
+                  <th
+                    colSpan={3}
+                    style={{
+                      background: "#dcfce7",
+                      color: "#166534",
+                      textAlign: "center",
+                      fontWeight: 800,
+                      padding: "8px 12px",
+                      borderRight: "2px solid #86efac",
+                      letterSpacing: "0.03em",
+                      textTransform: "uppercase",
+                      fontSize: "12px",
+                    }}
+                  >
+                    Student Details
+                  </th>
+                  {sessions.length > 0 && (
+                    <th
+                      colSpan={sessions.length}
+                      style={{
+                        background: "#eff6ff",
+                        color: "#1e40af",
+                        textAlign: "center",
+                        fontWeight: 800,
+                        padding: "8px 12px",
+                        borderRight: "2px solid #93c5fd",
+                        letterSpacing: "0.03em",
+                        textTransform: "uppercase",
+                        fontSize: "12px",
+                      }}
+                    >
+                      Session Attendance ({sessions.length} Sessions)
+                    </th>
+                  )}
+                  <th
+                    colSpan={4}
+                    style={{
+                      background: "#f8fafc",
+                      color: "#334155",
+                      textAlign: "center",
+                      fontWeight: 800,
+                      padding: "8px 12px",
+                      letterSpacing: "0.03em",
+                      textTransform: "uppercase",
+                      fontSize: "12px",
+                    }}
+                  >
+                    Attendance Summary
+                  </th>
+                </tr>
+
+                {/* Main Column Header Row */}
+                <tr style={{ background: "#f8fafc", borderBottom: "2px solid #cbd5e1" }}>
+                  <th style={{ width: "45px", textAlign: "center", background: "#f0fdf4" }}>Sl</th>
+                  <th style={{ minWidth: "140px", background: "#f0fdf4" }}>Student ID</th>
+                  <th style={{ minWidth: "180px", background: "#f0fdf4", borderRight: "2px solid #bbf7d0" }}>Student Name</th>
+                  {sessionHeaders.map((hdr, sIdx) => (
+                    <th
+                      key={sIdx}
+                      style={{
+                        minWidth: "120px",
+                        textAlign: "center",
+                        padding: "10px 8px",
+                        fontWeight: 700,
+                        whiteSpace: "nowrap",
+                        color: "#1e293b",
+                        borderRight: sIdx === sessionHeaders.length - 1 ? "2px solid #bfdbfe" : "1px solid #e2e8f0",
+                      }}
+                    >
+                      {hdr}
+                    </th>
+                  ))}
+                  <th style={{ minWidth: "85px", textAlign: "center", color: "#166534" }}>Present</th>
+                  <th style={{ minWidth: "85px", textAlign: "center", color: "#b91c1c" }}>Absent</th>
+                  <th style={{ minWidth: "90px", textAlign: "center" }}>Total Held</th>
+                  <th style={{ minWidth: "100px", textAlign: "center", fontWeight: 800 }}>Total %</th>
                 </tr>
               </thead>
               <tbody>
-                {reportRows.map((row) => (
-                  <tr key={row.student.id}>
-                    <td>{row.student.student_id}</td>
-                    <td>{row.student.name}</td>
-                    <td>{row.student.slr || "-"}</td>
-                    <td>
+                {reportRows.map((row, idx) => (
+                  <tr
+                    key={row.student.id || row.student.student_id}
+                    style={{
+                      borderBottom: "1px solid #f1f5f9",
+                      background: idx % 2 === 0 ? "#ffffff" : "#fafafa",
+                    }}
+                  >
+                    <td style={{ textAlign: "center", color: "#64748b", fontWeight: 600 }}>{idx + 1}</td>
+                    <td style={{ fontWeight: 600, fontFamily: "monospace" }}>{row.student.student_id}</td>
+                    <td style={{ fontWeight: 600, borderRight: "2px solid #e2e8f0" }}>{row.student.name}</td>
+                    {row.sessionStatuses.map((st, sIdx) => (
+                      <td
+                        key={sIdx}
+                        style={{
+                          textAlign: "center",
+                          padding: "6px 8px",
+                          borderRight: sIdx === row.sessionStatuses.length - 1 ? "2px solid #e2e8f0" : "1px solid #f1f5f9",
+                        }}
+                      >
+                        <span
+                          style={{
+                            display: "inline-block",
+                            width: "28px",
+                            height: "28px",
+                            lineHeight: "28px",
+                            borderRadius: "6px",
+                            fontWeight: 800,
+                            fontSize: "13px",
+                            background: st === "P" ? "#dcfce7" : "#fee2e2",
+                            color: st === "P" ? "#15803d" : "#b91c1c",
+                            border: `1px solid ${st === "P" ? "#86efac" : "#fca5a5"}`,
+                          }}
+                        >
+                          {st}
+                        </span>
+                      </td>
+                    ))}
+                    <td style={{ textAlign: "center" }}>
                       <span className="status-present">{row.present}</span>
                     </td>
-                    <td>
+                    <td style={{ textAlign: "center" }}>
                       <span className="status-absent">{row.absent}</span>
                     </td>
-                    <td>{row.held}</td>
-                    <td>
+                    <td style={{ textAlign: "center", fontWeight: 600 }}>{row.held}</td>
+                    <td style={{ textAlign: "center" }}>
                       <strong
                         style={{
                           color:
@@ -3701,6 +3930,7 @@ function ReportsPage({
                               : row.percentage >= 60
                               ? "#f59e0b"
                               : "#ef4444",
+                          fontSize: "13px",
                         }}
                       >
                         {row.percentage.toFixed(2)}%
